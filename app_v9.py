@@ -110,8 +110,8 @@ def _db_read_sql_query(query: str, conn, params=None) -> pd.DataFrame:
     raw_conn = conn._conn if hasattr(conn, "_conn") else conn
     adapted = _adapt_sql(query, backend)
     if params is None:
-        return _db_read_sql_query(adapted, raw_conn)
-    return _db_read_sql_query(adapted, raw_conn, params=params)
+        return pd.read_sql_query(adapted, raw_conn)
+    return pd.read_sql_query(adapted, raw_conn, params=params)
 
 REQUEST_TYPES = [
     "Service",
@@ -4110,8 +4110,135 @@ def lacb_assistant_page():
                 st.write(msg["content"])
 
 
+
+
+
+def migrate_sqlite_file_to_current_backend(sqlite_file_path: str, truncate_first: bool = False):
+    backend = _current_db_backend()
+    if backend != "postgres":
+        return False, "Current backend is not Postgres. Set DB_BACKEND=postgres first.", {}
+
+    tables = [
+        "tickets",
+        "activities",
+        "manual_tallies",
+        "assistant_prompt_templates",
+    ]
+
+    source_conn = sqlite3.connect(sqlite_file_path)
+    dest_conn = get_conn()
+
+    migrated = {}
+    try:
+        source_cur = source_conn.cursor()
+        dest_cur = dest_conn.cursor()
+
+        for table in tables:
+            source_cur.execute(f"PRAGMA table_info({table})")
+            source_cols = [r[1] for r in source_cur.fetchall()]
+            if not source_cols:
+                migrated[table] = 0
+                continue
+
+            dest_cols = _table_columns(dest_conn, table)
+            common_cols = [c for c in source_cols if c in dest_cols]
+            if not common_cols:
+                migrated[table] = 0
+                continue
+
+            source_cur.execute(f"SELECT {', '.join(common_cols)} FROM {table}")
+            rows = source_cur.fetchall()
+
+            if truncate_first:
+                dest_cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
+
+            if not rows:
+                migrated[table] = 0
+                continue
+
+            col_list = ", ".join(common_cols)
+            placeholders = ", ".join(["?"] * len(common_cols))
+
+            if "id" in common_cols:
+                update_cols = [c for c in common_cols if c != "id"]
+                if update_cols:
+                    update_set = ", ".join([f"{c}=EXCLUDED.{c}" for c in update_cols])
+                    upsert_sql = (
+                        f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
+                        f"ON CONFLICT (id) DO UPDATE SET {update_set}"
+                    )
+                else:
+                    upsert_sql = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) ON CONFLICT (id) DO NOTHING"
+            else:
+                upsert_sql = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"
+
+            dest_cur.executemany(upsert_sql, rows)
+            migrated[table] = len(rows)
+
+            if "id" in common_cols:
+                dest_cur.execute(
+                    f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1), true)"
+                )
+
+        dest_conn.commit()
+        return True, "SQLite to Postgres migration completed.", migrated
+    except Exception as ex:
+        try:
+            dest_conn.rollback()
+        except Exception:
+            pass
+        return False, f"Migration failed: {ex}", migrated
+    finally:
+        source_conn.close()
+        dest_conn.close()
+
 def history_export_page():
     st.title("History / Export")
+
+    backend = _current_db_backend()
+    with st.expander("Admin: Migrate SQLite to Postgres", expanded=False):
+        st.caption("Upload your previous local SQLite .db file to migrate historical data into Supabase/Postgres.")
+        st.write(f"Current backend: **{backend}**")
+        upload_db = st.file_uploader(
+            "Upload SQLite database file",
+            type=["db", "sqlite", "sqlite3"],
+            key="sqlite_migrate_upload",
+        )
+        truncate_first = st.checkbox(
+            "Replace current Postgres data first (TRUNCATE)",
+            value=False,
+            key="sqlite_migrate_truncate",
+        )
+
+        if st.button("Run SQLite -> Postgres Migration", key="sqlite_migrate_run_btn"):
+            if backend != "postgres":
+                st.warning("Set DB_BACKEND=postgres in secrets before running migration.")
+            elif not upload_db:
+                st.warning("Please upload a .db file first.")
+            else:
+                import tempfile
+
+                temp_path = ""
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+                        tmp.write(upload_db.getbuffer())
+                        temp_path = tmp.name
+
+                    ok, msg, detail = migrate_sqlite_file_to_current_backend(temp_path, truncate_first=truncate_first)
+                    if ok:
+                        st.success(msg)
+                        if detail:
+                            st.write("Rows migrated:")
+                            st.json(detail)
+                        st.info("Refresh page tabs to see imported data.")
+                    else:
+                        st.error(msg)
+                        if detail:
+                            st.write("Progress before failure:")
+                            st.json(detail)
+                finally:
+                    if temp_path and os.path.exists(temp_path):
+                        os.unlink(temp_path)
 
     conn = get_conn()
     df_activities = _db_read_sql_query(
