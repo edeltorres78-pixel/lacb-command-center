@@ -1,0 +1,9 @@
+streamlit>=1.36.0
+pandas>=2.2.0
+openpyxl>=3.1.0
+
+python -m pip install -r requirements_v6.txt
+streamlit run app_v6.py
+streamlit run app_v7.py
+streamlit run app_v8.py
+streamlit run app_v9.py - streamlit run "C:\Users\edelt\OneDrive\Escritorio\LACB_Scheduler\app_v9.py"
