@@ -13,6 +13,11 @@ try:
 except ImportError:
     OpenAI = None
 
+try:
+    import psycopg2
+except ImportError:
+    psycopg2 = None
+
 
 # =========================================================
 # CONFIG
@@ -20,6 +25,93 @@ except ImportError:
 
 APP_TITLE = "LACB Customer Care Command Center V9"
 DB_PATH = "lacb_command_center.db"
+
+
+def _safe_secret_get(key, default=None):
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+def _current_db_backend() -> str:
+    backend = (
+        os.getenv("DB_BACKEND")
+        or _safe_secret_get("DB_BACKEND")
+        or ("postgres" if (os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL")) else "sqlite")
+    )
+    return str(backend or "sqlite").strip().lower()
+
+
+def _pg_conn_args() -> dict:
+    db_url = os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL")
+    if db_url:
+        return {"dsn": db_url}
+
+    args = {
+        "host": os.getenv("PGHOST") or _safe_secret_get("PGHOST"),
+        "port": int(os.getenv("PGPORT") or _safe_secret_get("PGPORT") or 5432),
+        "dbname": os.getenv("PGDATABASE") or _safe_secret_get("PGDATABASE"),
+        "user": os.getenv("PGUSER") or _safe_secret_get("PGUSER"),
+        "password": os.getenv("PGPASSWORD") or _safe_secret_get("PGPASSWORD"),
+        "sslmode": os.getenv("PGSSLMODE") or _safe_secret_get("PGSSLMODE") or "require",
+    }
+    return args
+
+
+def _adapt_sql(sql: str, backend: str) -> str:
+    if backend == "postgres":
+        return sql.replace("?", "%s")
+    return sql
+
+
+class _DBCursor:
+    def __init__(self, cursor, backend: str):
+        self._cursor = cursor
+        self._backend = backend
+
+    def execute(self, sql, params=None):
+        adapted = _adapt_sql(sql, self._backend)
+        if params is None:
+            return self._cursor.execute(adapted)
+        return self._cursor.execute(adapted, params)
+
+    def executemany(self, sql, seq_of_params):
+        adapted = _adapt_sql(sql, self._backend)
+        return self._cursor.executemany(adapted, seq_of_params)
+
+    def __getattr__(self, item):
+        return getattr(self._cursor, item)
+
+
+class _DBConn:
+    def __init__(self, conn, backend: str):
+        self._conn = conn
+        self.backend = backend
+
+    def cursor(self):
+        return _DBCursor(self._conn.cursor(), self.backend)
+
+    def commit(self):
+        return self._conn.commit()
+
+    def rollback(self):
+        return self._conn.rollback()
+
+    def close(self):
+        return self._conn.close()
+
+    def __getattr__(self, item):
+        return getattr(self._conn, item)
+
+
+def _db_read_sql_query(query: str, conn, params=None) -> pd.DataFrame:
+    backend = getattr(conn, "backend", _current_db_backend())
+    raw_conn = conn._conn if hasattr(conn, "_conn") else conn
+    adapted = _adapt_sql(query, backend)
+    if params is None:
+        return _db_read_sql_query(adapted, raw_conn)
+    return _db_read_sql_query(adapted, raw_conn, params=params)
 
 REQUEST_TYPES = [
     "Service",
@@ -336,7 +428,15 @@ st.set_page_config(
 # =========================================================
 
 def get_conn():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+    backend = _current_db_backend()
+    if backend == "postgres":
+        if psycopg2 is None:
+            raise RuntimeError("Postgres backend selected but psycopg2 is not installed.")
+        raw = psycopg2.connect(**_pg_conn_args())
+        return _DBConn(raw, "postgres")
+
+    raw = sqlite3.connect(DB_PATH, check_same_thread=False)
+    return _DBConn(raw, "sqlite")
 
 
 def _parse_cc_sequence(cc_id: str) -> int:
@@ -357,10 +457,27 @@ def get_next_cc_id(conn) -> str:
     return _next_cc_id_from_seq(max_seq + 1)
 
 
+def _table_columns(conn, table_name: str) -> list[str]:
+    cur = conn.cursor()
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ?
+            """,
+            (table_name,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+    cur.execute(f"PRAGMA table_info({table_name})")
+    return [r[1] for r in cur.fetchall()]
+
+
 def ensure_cc_id_schema_and_backfill(conn):
     cur = conn.cursor()
-    cur.execute("PRAGMA table_info(tickets)")
-    cols = [r[1] for r in cur.fetchall()]
+    cols = _table_columns(conn, "tickets")
     if "cc_id" not in cols:
         cur.execute("ALTER TABLE tickets ADD COLUMN cc_id TEXT")
 
@@ -392,91 +509,173 @@ def ensure_cc_id_schema_and_backfill(conn):
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tickets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket_title TEXT,
-            customer_name TEXT,
-            order_no TEXT,
-            phone TEXT,
-            issue_type TEXT,
-            request_type TEXT,
-            ticket_source TEXT,
-            assigned_by TEXT,
-            assigned_agent TEXT,
-            hubspot_stage TEXT,
-            internal_status TEXT,
-            attempt_no INTEGER DEFAULT 1,
-            last_activity_date TEXT,
-            next_followup_date TEXT,
-            scheduling_flags TEXT,
-            notes_summary TEXT,
-            created_at TEXT,
-            updated_at TEXT
+    backend = getattr(conn, "backend", "sqlite")
+
+    if backend == "postgres":
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id BIGSERIAL PRIMARY KEY,
+                ticket_title TEXT,
+                customer_name TEXT,
+                order_no TEXT,
+                phone TEXT,
+                issue_type TEXT,
+                request_type TEXT,
+                ticket_source TEXT,
+                assigned_by TEXT,
+                assigned_agent TEXT,
+                hubspot_stage TEXT,
+                internal_status TEXT,
+                attempt_no INTEGER DEFAULT 1,
+                last_activity_date TEXT,
+                next_followup_date TEXT,
+                scheduling_flags TEXT,
+                notes_summary TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
         )
-        """
-    )
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS activities (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticket_id INTEGER,
-            activity_date TEXT,
-            logging_agent TEXT,
-            assigned_owner TEXT,
-            action_type TEXT,
-            result_type TEXT,
-            notes TEXT,
-            created_at TEXT,
-            FOREIGN KEY(ticket_id) REFERENCES tickets(id)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS activities (
+                id BIGSERIAL PRIMARY KEY,
+                ticket_id BIGINT,
+                activity_date TEXT,
+                logging_agent TEXT,
+                assigned_owner TEXT,
+                action_type TEXT,
+                result_type TEXT,
+                notes TEXT,
+                created_at TEXT,
+                io_channel TEXT,
+                customer_name TEXT,
+                order_no TEXT,
+                phone TEXT,
+                ticket_update_name TEXT,
+                email TEXT
+            )
+            """
         )
-        """
-    )
 
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS manual_tallies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tally_date TEXT,
-            owner TEXT,
-            metric_type TEXT,
-            quantity INTEGER DEFAULT 0,
-            notes TEXT,
-            created_at TEXT
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manual_tallies (
+                id BIGSERIAL PRIMARY KEY,
+                tally_date TEXT,
+                owner TEXT,
+                metric_type TEXT,
+                quantity INTEGER DEFAULT 0,
+                notes TEXT,
+                created_at TEXT
+            )
+            """
         )
-        """
-    )
 
-
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS assistant_prompt_templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            template_name TEXT UNIQUE,
-            prompt_text TEXT,
-            created_at TEXT,
-            updated_at TEXT
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_prompt_templates (
+                id BIGSERIAL PRIMARY KEY,
+                template_name TEXT UNIQUE,
+                prompt_text TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
         )
-        """
-    )
 
-    # Backfill/extend activities schema for inbound-outbound activity tracker
-    cur.execute("PRAGMA table_info(activities)")
-    act_cols = [r[1] for r in cur.fetchall()]
-    if "io_channel" not in act_cols:
-        cur.execute("ALTER TABLE activities ADD COLUMN io_channel TEXT")
-    if "customer_name" not in act_cols:
-        cur.execute("ALTER TABLE activities ADD COLUMN customer_name TEXT")
-    if "order_no" not in act_cols:
-        cur.execute("ALTER TABLE activities ADD COLUMN order_no TEXT")
-    if "phone" not in act_cols:
-        cur.execute("ALTER TABLE activities ADD COLUMN phone TEXT")
-    if "ticket_update_name" not in act_cols:
-        cur.execute("ALTER TABLE activities ADD COLUMN ticket_update_name TEXT")
-    if "email" not in act_cols:
-        cur.execute("ALTER TABLE activities ADD COLUMN email TEXT")
+        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS io_channel TEXT")
+        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS customer_name TEXT")
+        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS order_no TEXT")
+        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS phone TEXT")
+        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS ticket_update_name TEXT")
+        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS email TEXT")
+    else:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_title TEXT,
+                customer_name TEXT,
+                order_no TEXT,
+                phone TEXT,
+                issue_type TEXT,
+                request_type TEXT,
+                ticket_source TEXT,
+                assigned_by TEXT,
+                assigned_agent TEXT,
+                hubspot_stage TEXT,
+                internal_status TEXT,
+                attempt_no INTEGER DEFAULT 1,
+                last_activity_date TEXT,
+                next_followup_date TEXT,
+                scheduling_flags TEXT,
+                notes_summary TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS activities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER,
+                activity_date TEXT,
+                logging_agent TEXT,
+                assigned_owner TEXT,
+                action_type TEXT,
+                result_type TEXT,
+                notes TEXT,
+                created_at TEXT,
+                FOREIGN KEY(ticket_id) REFERENCES tickets(id)
+            )
+            """
+        )
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manual_tallies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tally_date TEXT,
+                owner TEXT,
+                metric_type TEXT,
+                quantity INTEGER DEFAULT 0,
+                notes TEXT,
+                created_at TEXT
+            )
+            """
+        )
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_prompt_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_name TEXT UNIQUE,
+                prompt_text TEXT,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+        cur.execute("PRAGMA table_info(activities)")
+        act_cols = [r[1] for r in cur.fetchall()]
+        if "io_channel" not in act_cols:
+            cur.execute("ALTER TABLE activities ADD COLUMN io_channel TEXT")
+        if "customer_name" not in act_cols:
+            cur.execute("ALTER TABLE activities ADD COLUMN customer_name TEXT")
+        if "order_no" not in act_cols:
+            cur.execute("ALTER TABLE activities ADD COLUMN order_no TEXT")
+        if "phone" not in act_cols:
+            cur.execute("ALTER TABLE activities ADD COLUMN phone TEXT")
+        if "ticket_update_name" not in act_cols:
+            cur.execute("ALTER TABLE activities ADD COLUMN ticket_update_name TEXT")
+        if "email" not in act_cols:
+            cur.execute("ALTER TABLE activities ADD COLUMN email TEXT")
 
     ensure_cc_id_schema_and_backfill(conn)
     conn.commit()
@@ -1542,7 +1741,7 @@ def save_generated_ticket_to_tracker(
 
 def get_all_tickets_df() -> pd.DataFrame:
     conn = get_conn()
-    df = pd.read_sql_query(
+    df = _db_read_sql_query(
         """
         SELECT *
         FROM tickets
@@ -1916,7 +2115,7 @@ def add_activity(ticket_id, logging_agent, assigned_owner, action_type, result_t
 
 def get_activities_for_ticket(ticket_id: int) -> pd.DataFrame:
     conn = get_conn()
-    df = pd.read_sql_query(
+    df = _db_read_sql_query(
         """
         SELECT id, activity_date, logging_agent, assigned_owner, action_type, result_type, notes
         FROM activities
@@ -2022,7 +2221,7 @@ def add_manual_tally(tally_date: str, owner: str, metric_type: str, quantity: in
 def get_manual_tallies_df() -> pd.DataFrame:
     conn = get_conn()
     try:
-        df = pd.read_sql_query("SELECT * FROM manual_tallies ORDER BY id DESC", conn)
+        df = _db_read_sql_query("SELECT * FROM manual_tallies ORDER BY id DESC", conn)
     except Exception:
         df = pd.DataFrame(columns=["id", "tally_date", "owner", "metric_type", "quantity", "notes", "created_at"])
     conn.close()
@@ -2057,7 +2256,7 @@ def apply_manual_tally_adjustment(tally_date: str, owner: str, metric_type: str,
 def get_custom_prompt_templates() -> dict:
     conn = get_conn()
     try:
-        df = pd.read_sql_query(
+        df = _db_read_sql_query(
             """
             SELECT template_name, prompt_text
             FROM assistant_prompt_templates
@@ -2691,8 +2890,8 @@ def kpi_dashboard_page():
     end_iso = end_date.isoformat()
 
     conn = get_conn()
-    df_tickets = pd.read_sql_query("SELECT * FROM tickets ORDER BY id DESC", conn)
-    df_activities = pd.read_sql_query("SELECT * FROM activities ORDER BY id DESC", conn)
+    df_tickets = _db_read_sql_query("SELECT * FROM tickets ORDER BY id DESC", conn)
+    df_activities = _db_read_sql_query("SELECT * FROM activities ORDER BY id DESC", conn)
     conn.close()
 
     if not df_tickets.empty:
@@ -2847,7 +3046,7 @@ def ticket_tracker_page():
         st.rerun()
 
     conn = get_conn()
-    io_df = pd.read_sql_query("SELECT * FROM activities ORDER BY id DESC", conn)
+    io_df = _db_read_sql_query("SELECT * FROM activities ORDER BY id DESC", conn)
     conn.close()
 
     st.markdown("### Inbound-Outbound Activity Log")
@@ -3915,7 +4114,7 @@ def history_export_page():
     st.title("History / Export")
 
     conn = get_conn()
-    df_activities = pd.read_sql_query(
+    df_activities = _db_read_sql_query(
         """
         SELECT
             a.id,
