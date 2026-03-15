@@ -1,4 +1,4 @@
-﻿import io
+import io
 import os
 import re
 import sqlite3
@@ -46,19 +46,33 @@ def _current_db_backend() -> str:
     return str(backend or "sqlite").strip().lower()
 
 def _pg_conn_args() -> dict:
+    # Prefer explicit PG* fields first so stale DATABASE_URL values don't hijack
+    # the connection (common during Cloud secrets edits/migrations).
+    host = os.getenv("PGHOST") or _safe_secret_get("PGHOST")
+    if host:
+        return {
+            "host": str(host).strip(),
+            "port": int(os.getenv("PGPORT") or _safe_secret_get("PGPORT") or 5432),
+            "dbname": os.getenv("PGDATABASE") or _safe_secret_get("PGDATABASE"),
+            "user": os.getenv("PGUSER") or _safe_secret_get("PGUSER"),
+            "password": os.getenv("PGPASSWORD") or _safe_secret_get("PGPASSWORD"),
+            "sslmode": os.getenv("PGSSLMODE") or _safe_secret_get("PGSSLMODE") or "require",
+        }
+
     db_url = os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL")
-    if db_url:
+    db_url = str(db_url or "").strip()
+    # Ignore template/placeholder URLs that cause DNS failures in production.
+    if db_url and "<your-project-ref>" not in db_url and "[YOUR-PASSWORD]" not in db_url:
         return {"dsn": db_url}
 
-    args = {
-        "host": os.getenv("PGHOST") or _safe_secret_get("PGHOST"),
-        "port": int(os.getenv("PGPORT") or _safe_secret_get("PGPORT") or 5432),
-        "dbname": os.getenv("PGDATABASE") or _safe_secret_get("PGDATABASE"),
-        "user": os.getenv("PGUSER") or _safe_secret_get("PGUSER"),
-        "password": os.getenv("PGPASSWORD") or _safe_secret_get("PGPASSWORD"),
-        "sslmode": os.getenv("PGSSLMODE") or _safe_secret_get("PGSSLMODE") or "require",
+    return {
+        "host": None,
+        "port": 5432,
+        "dbname": None,
+        "user": None,
+        "password": None,
+        "sslmode": "require",
     }
-    return args
 
 
 def _adapt_sql(sql: str, backend: str) -> str:
@@ -2498,12 +2512,12 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         phone_display = phone or "N/A"
         schedule_text = (
             "SCHEDULING REQUEST:\n"
-            f"🔢 Active Order Number: {order_display}\n"
-            f"👤 Customer Name: {customer_name}\n"
-            f"📞☎️ Phone: {phone_display}\n"
-            "🚚 Installer/Region (if applicable): [Add installer/region]\n"
-            "📅 Requested Date & Time or Customer Availability: [Add availability]\n"
-            "📝 Any Special Notes: " + text + "\n\n"
+            f"?? Active Order Number: {order_display}\n"
+            f"?? Customer Name: {customer_name}\n"
+            f"???? Phone: {phone_display}\n"
+            "?? Installer/Region (if applicable): [Add installer/region]\n"
+            "?? Requested Date & Time or Customer Availability: [Add availability]\n"
+            "?? Any Special Notes: " + text + "\n\n"
             "Internal Note:\n"
             f"I created a scheduling request for {customer_name} (Order {order_display}). "
             "Please contact the customer to confirm availability and book the visit. "
@@ -3777,12 +3791,12 @@ def scheduling_assistant_page():
         if st.button("Generate Scheduling Request"):
             output = (
                 "SCHEDULING REQUEST:\n"
-                f"🔢 Active Order Number: {order_no or 'N/A'}\n"
-                f"👤 Customer Name: {customer or 'N/A'}\n"
-                f"📞☎️ Phone: {phone or 'N/A'}\n"
-                f"🚚 Installer/Region (if applicable): {installer_region or 'N/A'}\n"
-                f"📅 Requested Date & Time or Customer Availability: {availability or 'N/A'}\n"
-                f"📝 Any Special Notes: {special_notes or 'N/A'}"
+                f"?? Active Order Number: {order_no or 'N/A'}\n"
+                f"?? Customer Name: {customer or 'N/A'}\n"
+                f"???? Phone: {phone or 'N/A'}\n"
+                f"?? Installer/Region (if applicable): {installer_region or 'N/A'}\n"
+                f"?? Requested Date & Time or Customer Availability: {availability or 'N/A'}\n"
+                f"?? Any Special Notes: {special_notes or 'N/A'}"
             )
             route, reason = compute_scheduling_route(flags)
 
