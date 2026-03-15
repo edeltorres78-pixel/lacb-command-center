@@ -1,4 +1,4 @@
-import io
+﻿import io
 import os
 import re
 import sqlite3
@@ -2875,37 +2875,49 @@ def follow_up_assistant_page():
     st.dataframe(view_df, use_container_width=True)
 
 
-def kpi_dashboard_page():
-    st.title("KPI Dashboard")
-
-    owner_filter = st.selectbox("Owner View", ["Combined"] + OWNERS, key="kpi_owner_view")
-    time_view = st.selectbox("Time View", ["Daily", "Weekly", "Monthly", "Custom Range"], key="kpi_time_view")
-
+def _kpi_pick_period(prefix: str):
+    time_view = st.selectbox(
+        "KPI View",
+        ["Daily", "Weekly", "Monthly", "Custom Range"],
+        key=f"{prefix}_time_view",
+    )
     today_dt = date.today()
     if time_view == "Daily":
-        selected_day = st.date_input("Date", value=today_dt, key="kpi_day")
-        start_date = selected_day
-        end_date = selected_day
-    elif time_view == "Weekly":
-        selected_week_day = st.date_input("Any Date in Week", value=today_dt, key="kpi_week")
-        start_date = selected_week_day - timedelta(days=selected_week_day.weekday())
+        ref_date = st.date_input("Reference Date", value=today_dt, key=f"{prefix}_day")
+        return time_view, ref_date, ref_date
+    if time_view == "Weekly":
+        ref_date = st.date_input("Reference Date", value=today_dt, key=f"{prefix}_week")
+        start_date = ref_date - timedelta(days=ref_date.weekday())
         end_date = start_date + timedelta(days=6)
-    elif time_view == "Monthly":
-        selected_month_day = st.date_input("Any Date in Month", value=today_dt, key="kpi_month")
-        start_date = selected_month_day.replace(day=1)
-        if selected_month_day.month == 12:
-            next_month = selected_month_day.replace(year=selected_month_day.year + 1, month=1, day=1)
+        return time_view, start_date, end_date
+    if time_view == "Monthly":
+        ref_date = st.date_input("Reference Date", value=today_dt, key=f"{prefix}_month")
+        start_date = ref_date.replace(day=1)
+        if ref_date.month == 12:
+            next_month = ref_date.replace(year=ref_date.year + 1, month=1, day=1)
         else:
-            next_month = selected_month_day.replace(month=selected_month_day.month + 1, day=1)
+            next_month = ref_date.replace(month=ref_date.month + 1, day=1)
         end_date = next_month - timedelta(days=1)
-    else:
-        c1, c2 = st.columns(2)
-        start_date = c1.date_input("Start Date", value=today_dt - timedelta(days=7), key="kpi_custom_start")
-        end_date = c2.date_input("End Date", value=today_dt, key="kpi_custom_end")
-        if end_date < start_date:
-            st.warning("End date cannot be before start date.")
-            return
+        return time_view, start_date, end_date
 
+    c1, c2 = st.columns(2)
+    start_date = c1.date_input(
+        "Start Date", value=today_dt - timedelta(days=7), key=f"{prefix}_custom_start"
+    )
+    end_date = c2.date_input("End Date", value=today_dt, key=f"{prefix}_custom_end")
+    if end_date < start_date:
+        st.warning("End date cannot be before start date.")
+        return time_view, start_date, start_date
+    return time_view, start_date, end_date
+
+
+def _kpi_token_count(df: pd.DataFrame, column: str, token: str) -> int:
+    if df.empty or column not in df.columns:
+        return 0
+    return int(df[column].fillna("").astype(str).str.contains(re.escape(token), case=False).sum())
+
+
+def _kpi_load_data(owner_filter: str, start_date: date, end_date: date):
     start_iso = start_date.isoformat()
     end_iso = end_date.isoformat()
 
@@ -2915,95 +2927,190 @@ def kpi_dashboard_page():
     conn.close()
 
     if not df_tickets.empty:
-        df_tickets = df_tickets[df_tickets["created_at"].astype(str).str[:10].between(start_iso, end_iso)]
-        if owner_filter != "Combined":
+        if "created_at" in df_tickets.columns:
+            df_tickets = df_tickets[
+                df_tickets["created_at"].fillna("").astype(str).str[:10].between(start_iso, end_iso)
+            ]
+        if owner_filter != "All Agents" and "assigned_agent" in df_tickets.columns:
             df_tickets = df_tickets[df_tickets["assigned_agent"] == owner_filter]
 
     if not df_activities.empty:
-        activity_dates = df_activities["activity_date"].astype(str).str[:10]
-        df_activities = df_activities[activity_dates.between(start_iso, end_iso)]
-        if owner_filter != "Combined":
-            df_activities = df_activities[df_activities["assigned_owner"] == owner_filter]
+        if "activity_date" in df_activities.columns:
+            act_dates = df_activities["activity_date"].fillna("").astype(str).str[:10]
+            df_activities = df_activities[act_dates.between(start_iso, end_iso)]
+        if owner_filter != "All Agents":
+            if "logging_agent" in df_activities.columns:
+                df_activities = df_activities[df_activities["logging_agent"] == owner_filter]
+            elif "assigned_owner" in df_activities.columns:
+                df_activities = df_activities[df_activities["assigned_owner"] == owner_filter]
+    return df_tickets, df_activities
 
-    st.caption(f"Showing KPI from {start_iso} to {end_iso}")
 
-    def _count_action(label: str) -> int:
-        if df_activities.empty:
-            return 0
-        return int(df_activities["action_type"].fillna("").str.contains(re.escape(label), case=False).sum())
+def kpi_dashboard_page():
+    st.title("LACB Inbound-Outbound KPI Dashboard")
 
-    def _count_channel(label: str) -> int:
-        if df_activities.empty or "io_channel" not in df_activities.columns:
-            return 0
-        return int(df_activities["io_channel"].fillna("").str.contains(re.escape(label), case=False, na=False).sum())
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        owner_filter = st.selectbox("Agent Filter", ["All Agents"] + OWNERS, key="kpi_owner_view")
+    with c2:
+        time_view, start_date, end_date = _kpi_pick_period("kpi")
 
-    tickets_assigned = (
-        _count_action("New Ticket Assigned - Receptionist")
-        + _count_action("New Ticket Assigned - Supervisor")
-        + _count_action("New Ticket Assigned - Sales")
-        + _count_action("New Ticket Assigned - Other")
+    period_label = f"{time_view} | {start_date.isoformat()} to {end_date.isoformat()}"
+
+    df_tickets, df_activities = _kpi_load_data(owner_filter, start_date, end_date)
+
+    total_activities = len(df_activities) if not df_activities.empty else 0
+    total_ticket_actions = (
+        _kpi_token_count(df_activities, "action_type", "new ticket")
+        + _kpi_token_count(df_activities, "action_type", "ticket updated")
+        + _kpi_token_count(df_activities, "action_type", "ticket closed")
     )
 
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Tickets Created", _count_action("New Ticket Created"))
-    m2.metric("Tickets Assigned", tickets_assigned)
-    m3.metric("Tickets Updated", _count_action("Ticket Updated/Notes"))
-    m4.metric("Tickets Closed", _count_action("Ticket Closed"))
-    m5.metric("Activity Logs", 0 if df_activities.empty else len(df_activities))
+    ref_cols = st.columns([1.4, 1, 1, 1])
+    ref_cols[0].markdown(
+        f"**Selected Period**\n\n{period_label}\n\n**Agent Filter**\n\n{owner_filter}"
+    )
+    ref_cols[1].metric("Total Activities", total_activities)
+    ref_cols[2].metric("Total Ticket Actions", total_ticket_actions)
+    ref_cols[3].metric("Tickets in Scope", len(df_tickets) if not df_tickets.empty else 0)
 
-    n1, n2, n3, n4 = st.columns(4)
-    n1.metric("Inbound RingCX", _count_channel("Inbound RingCX"))
-    n2.metric("Outbound RingCX", _count_channel("Outbound RingCX"))
-    n3.metric("Inbound RC", _count_channel("Inbound RC"))
-    n4.metric("Outbound RC", _count_channel("Outbound RC"))
+    summary_rows = [
+        ("Total Activities", total_activities),
+        ("Inbound RingCX", _kpi_token_count(df_activities, "io_channel", "Inbound RingCX")),
+        ("Outbound RingCX", _kpi_token_count(df_activities, "io_channel", "Outbound RingCX")),
+        ("Inbound RC", _kpi_token_count(df_activities, "io_channel", "Inbound RC")),
+        ("Outbound RC", _kpi_token_count(df_activities, "io_channel", "Outbound RC")),
+        ("SMS", _kpi_token_count(df_activities, "io_channel", "SMS")),
+        ("Email", _kpi_token_count(df_activities, "io_channel", "Email")),
+        ("Service Orders Created", _kpi_token_count(df_activities, "io_channel", "Service Order Created")),
+        (
+            "Tickets Assigned",
+            _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Receptionist")
+            + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Supervisor")
+            + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Sales")
+            + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Other"),
+        ),
+        ("Tickets Created", _kpi_token_count(df_activities, "action_type", "New Ticket Created")),
+        ("Tickets Updated", _kpi_token_count(df_activities, "action_type", "Ticket Updated/Notes")),
+        ("Tickets Closed", _kpi_token_count(df_activities, "action_type", "Ticket Closed")),
+        ("Tasks Updated", _kpi_token_count(df_activities, "action_type", "Task Updated")),
+        ("Tasks Completed", _kpi_token_count(df_activities, "action_type", "Task Marked Complete")),
+    ]
 
-    n5, n6, n7 = st.columns(3)
-    n5.metric("SMS", _count_channel("SMS"))
-    n6.metric("Email", _count_channel("Email"))
-    n7.metric("Service Orders", _count_channel("Service Order Created"))
+    channel_rows = [(ch, _kpi_token_count(df_activities, "io_channel", ch)) for ch in IO_CHANNELS]
+    action_rows = [(act, _kpi_token_count(df_activities, "action_type", act)) for act in IO_TASK_ACTIONS]
+    outcome_rows = [(out, _kpi_token_count(df_activities, "result_type", out)) for out in IO_OUTCOMES]
 
-    st.subheader("Channel Breakdown")
-    channel_rows = []
-    for ch in IO_CHANNELS:
-        channel_rows.append({"Channel": ch, "Count": _count_channel(ch)})
-    st.dataframe(pd.DataFrame(channel_rows), use_container_width=True, hide_index=True)
-
-    st.subheader("Action Breakdown")
-    action_rows = []
-    for act in IO_TASK_ACTIONS:
-        action_rows.append({"Action": act, "Count": _count_action(act)})
-    st.dataframe(pd.DataFrame(action_rows), use_container_width=True, hide_index=True)
-
-    st.subheader("Outcome Breakdown")
-    outcome_rows = []
-    if df_activities.empty:
-        outcome_df = pd.DataFrame(columns=["Outcome", "Count"])
-    else:
-        base = df_activities["result_type"].fillna("").value_counts().reset_index()
-        base.columns = ["Outcome", "Count"]
-        for out in IO_OUTCOMES:
-            count = int(base.loc[base["Outcome"] == out, "Count"].sum())
-            outcome_rows.append({"Outcome": out, "Count": count})
-        outcome_df = pd.DataFrame(outcome_rows)
-    st.dataframe(outcome_df, use_container_width=True, hide_index=True)
+    t1, t2, t3, t4 = st.columns(4)
+    with t1:
+        st.markdown("**KPI Summary**")
+        st.dataframe(
+            pd.DataFrame(summary_rows, columns=["Metric", "Count"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+    with t2:
+        st.markdown("**Channel Breakdown**")
+        st.dataframe(
+            pd.DataFrame(channel_rows, columns=["Channel", "Count"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+    with t3:
+        st.markdown("**All Actions Tally**")
+        st.dataframe(
+            pd.DataFrame(action_rows, columns=["Action", "Count"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+    with t4:
+        st.markdown("**Outcome Tally**")
+        st.dataframe(
+            pd.DataFrame(outcome_rows, columns=["Outcome", "Count"]),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     st.subheader("Filtered Activity Log")
-    activity_cols = [
-        c for c in [
-            "activity_date", "io_channel", "action_type", "customer_name", "order_no", "phone", "ticket_update_name",
-            "email", "result_type", "logging_agent", "assigned_owner", "notes"
-        ] if c in df_activities.columns
-    ]
-    st.dataframe(df_activities[activity_cols] if not df_activities.empty else df_activities, use_container_width=True)
+    if df_activities.empty:
+        st.info("No activity logs for the selected period/filter.")
+    else:
+        view_cols = [
+            c
+            for c in [
+                "activity_date",
+                "io_channel",
+                "action_type",
+                "phone",
+                "customer_name",
+                "order_no",
+                "ticket_update_name",
+                "email",
+                "result_type",
+                "logging_agent",
+                "notes",
+            ]
+            if c in df_activities.columns
+        ]
+        st.dataframe(df_activities[view_cols], use_container_width=True)
 
-    st.subheader("Filtered Tickets Created")
-    ticket_cols = [
-        c for c in [
-            "cc_id", "ticket_title", "customer_name", "order_no", "assigned_agent", "internal_status", "created_at"
-        ] if c in df_tickets.columns
-    ]
-    st.dataframe(df_tickets[ticket_cols] if not df_tickets.empty else df_tickets, use_container_width=True)
 
+def kpi_graph_dashboard_page():
+    st.title("LACB KPI Graph Dashboard")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        owner_filter = st.selectbox(
+            "Agent Filter",
+            ["All Agents"] + OWNERS,
+            key="kpi_graph_owner_view",
+        )
+    with c2:
+        time_view, start_date, end_date = _kpi_pick_period("kpi_graph")
+
+    st.caption(
+        f"Charts follow selected filters: {time_view} | "
+        f"{start_date.isoformat()} to {end_date.isoformat()} | {owner_filter}"
+    )
+
+    _, df_activities = _kpi_load_data(owner_filter, start_date, end_date)
+
+    channel_df = pd.DataFrame(
+        [{"Channel": ch, "Count": _kpi_token_count(df_activities, "io_channel", ch)} for ch in IO_CHANNELS]
+    )
+    action_df = pd.DataFrame(
+        [{"Action": act, "Count": _kpi_token_count(df_activities, "action_type", act)} for act in IO_TASK_ACTIONS]
+    )
+    outcome_df = pd.DataFrame(
+        [{"Outcome": out, "Count": _kpi_token_count(df_activities, "result_type", out)} for out in IO_OUTCOMES]
+    )
+
+    g1, g2 = st.columns(2)
+    with g1:
+        st.markdown("**Channel Breakdown**")
+        st.bar_chart(channel_df.set_index("Channel"))
+    with g2:
+        st.markdown("**Action Breakdown**")
+        st.bar_chart(action_df.set_index("Action"))
+
+    g3, g4 = st.columns(2)
+    with g3:
+        st.markdown("**Outcome Distribution**")
+        st.bar_chart(outcome_df.set_index("Outcome"))
+    with g4:
+        st.markdown("**KPI Summary Snapshot**")
+        kpi_df = pd.DataFrame(
+            [
+                {"Metric": "Inbound RingCX", "Count": _kpi_token_count(df_activities, "io_channel", "Inbound RingCX")},
+                {"Metric": "Outbound RingCX", "Count": _kpi_token_count(df_activities, "io_channel", "Outbound RingCX")},
+                {"Metric": "Inbound RC", "Count": _kpi_token_count(df_activities, "io_channel", "Inbound RC")},
+                {"Metric": "Outbound RC", "Count": _kpi_token_count(df_activities, "io_channel", "Outbound RC")},
+                {"Metric": "SMS", "Count": _kpi_token_count(df_activities, "io_channel", "SMS")},
+                {"Metric": "Email", "Count": _kpi_token_count(df_activities, "io_channel", "Email")},
+                {"Metric": "Service Orders Created", "Count": _kpi_token_count(df_activities, "io_channel", "Service Order Created")},
+                {"Metric": "Tickets Updated", "Count": _kpi_token_count(df_activities, "action_type", "Ticket Updated/Notes")},
+            ]
+        )
+        st.bar_chart(kpi_df.set_index("Metric"))
 
 def ticket_tracker_page():
     st.title("Ticket Tracker")
@@ -4465,7 +4572,9 @@ def history_export_page():
 PAGES = {
     "Follow-Up Assistant": follow_up_assistant_page,
     "KPI Dashboard": kpi_dashboard_page,
+    "KPI Graph Dashboard": kpi_graph_dashboard_page,
     "Ticket Tracker": ticket_tracker_page,
+    "Quick Activity Log": quick_activity_log_page,
     "HubSpot Ticket Builder V9": hubspot_ticket_builder_page_v9,
     "Service / Repair Builder": service_repair_builder_page,
     "Scheduling Assistant": scheduling_assistant_page,
