@@ -29,19 +29,21 @@ DB_PATH = "lacb_command_center.db"
 
 def _safe_secret_get(key, default=None):
     try:
-        return st.secrets.get(key, default)
+        secrets_obj = getattr(st, "secrets", None)
+        if secrets_obj is None:
+            return default
+        if key in secrets_obj:
+            return secrets_obj[key]
+        return default
     except Exception:
         return default
 
-
 def _current_db_backend() -> str:
-    backend = (
-        os.getenv("DB_BACKEND")
-        or _safe_secret_get("DB_BACKEND")
-        or ("postgres" if (os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL")) else "sqlite")
-    )
+    env_backend = os.getenv("DB_BACKEND")
+    sec_backend = _safe_secret_get("DB_BACKEND")
+    has_db_url = bool(os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL"))
+    backend = env_backend or sec_backend or ("postgres" if has_db_url else "sqlite")
     return str(backend or "sqlite").strip().lower()
-
 
 def _pg_conn_args() -> dict:
     db_url = os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL")
@@ -106,13 +108,14 @@ class _DBConn:
 
 
 def _db_read_sql_query(query: str, conn, params=None) -> pd.DataFrame:
-    backend = getattr(conn, "backend", _current_db_backend())
+    backend = getattr(conn, "backend", None)
+    if not backend:
+        backend = _current_db_backend()
     raw_conn = conn._conn if hasattr(conn, "_conn") else conn
     adapted = _adapt_sql(query, backend)
     if params is None:
         return pd.read_sql_query(adapted, raw_conn)
     return pd.read_sql_query(adapted, raw_conn, params=params)
-
 REQUEST_TYPES = [
     "Service",
     "Scheduling",
@@ -431,13 +434,16 @@ def get_conn():
     backend = _current_db_backend()
     if backend == "postgres":
         if psycopg2 is None:
-            raise RuntimeError("Postgres backend selected but psycopg2 is not installed.")
-        raw = psycopg2.connect(**_pg_conn_args())
-        return _DBConn(raw, "postgres")
+            st.warning("Postgres backend selected, but psycopg2 is missing. Falling back to local SQLite.")
+        else:
+            try:
+                raw = psycopg2.connect(**_pg_conn_args())
+                return _DBConn(raw, "postgres")
+            except Exception:
+                st.warning("Postgres connection failed. Falling back to local SQLite.")
 
     raw = sqlite3.connect(DB_PATH, check_same_thread=False)
     return _DBConn(raw, "sqlite")
-
 
 def _parse_cc_sequence(cc_id: str) -> int:
     m = re.match(r"^CC-(\d+)$", str(cc_id or "").strip(), flags=re.I)
@@ -4476,6 +4482,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
