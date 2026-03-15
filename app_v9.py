@@ -1,4 +1,3 @@
-﻿import io
 import os
 import re
 import sqlite3
@@ -26,24 +25,21 @@ except ImportError:
 APP_TITLE = "LACB Customer Care Command Center V9"
 DB_PATH = "lacb_command_center.db"
 
-
 def _safe_secret_get(key, default=None):
     try:
-        secrets_obj = getattr(st, "secrets", None)
-        if secrets_obj is None:
-            return default
-        if key in secrets_obj:
-            return secrets_obj[key]
-        return default
+        return st.secrets.get(key, default)
     except Exception:
         return default
 
+
 def _current_db_backend() -> str:
-    env_backend = os.getenv("DB_BACKEND")
-    sec_backend = _safe_secret_get("DB_BACKEND")
-    has_db_url = bool(os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL"))
-    backend = env_backend or sec_backend or ("postgres" if has_db_url else "sqlite")
+    backend = (
+        os.getenv("DB_BACKEND")
+        or _safe_secret_get("DB_BACKEND")
+        or ("postgres" if (os.getenv("DATABASE_URL") or _safe_secret_get("DATABASE_URL")) else "sqlite")
+    )
     return str(backend or "sqlite").strip().lower()
+
 
 def _pg_conn_args() -> dict:
     # Prefer explicit PG* fields first so stale DATABASE_URL values don't hijack
@@ -73,7 +69,6 @@ def _pg_conn_args() -> dict:
         "password": None,
         "sslmode": "require",
     }
-
 
 def _adapt_sql(sql: str, backend: str) -> str:
     if backend == "postgres":
@@ -122,14 +117,13 @@ class _DBConn:
 
 
 def _db_read_sql_query(query: str, conn, params=None) -> pd.DataFrame:
-    backend = getattr(conn, "backend", None)
-    if not backend:
-        backend = _current_db_backend()
+    backend = getattr(conn, "backend", _current_db_backend())
     raw_conn = conn._conn if hasattr(conn, "_conn") else conn
     adapted = _adapt_sql(query, backend)
     if params is None:
         return pd.read_sql_query(adapted, raw_conn)
     return pd.read_sql_query(adapted, raw_conn, params=params)
+
 REQUEST_TYPES = [
     "Service",
     "Scheduling",
@@ -203,7 +197,7 @@ MANUAL_TALLY_TYPES = [
 
 IO_CHANNELS = [
     "Inbound RingCX",
-    "Outbound RingCX",
+    "OutboundRingCX",
     "Inbound RC",
     "Outbound RC",
     "SMS",
@@ -230,14 +224,15 @@ IO_TASK_ACTIONS = [
 
 IO_OUTCOMES = [
     "Closed/Resolved",
+    "Escalated",
     "Waiting on Customer",
-    "Waiting on Vendor",
     "Waiting on DC",
     "Waiting on Internal Dpt",
     "Waiting on Scheduling Team",
+    "Waiting on Vendor",
+    "Transferred call",
+    "Follow up",
     "Scheduled",
-    "Follow-up Needed",
-    "Escalated",
 ]
 QUICK_LOG_ACTIONS = [
     "Outbound Call",
@@ -335,7 +330,7 @@ SCHEDULING_FLAGS = [
 REGION_ALIASES = {
     "LA": ["LA", "LOS ANGELES"],
     "OC": ["OC", "ORANGE COUNTY"],
-    "IE": ["IE", "IE/RIVERSIDE", "INLAND EMPIRE", "RIVERSIDE"],
+    "IE": ["IE", "INLAND EMPIRE", "RIVERSIDE"],
     "SD": ["SD", "SAN DIEGO"],
     "PS": ["PS", "PALM SPRINGS"],
     "ARIZONA": ["ARIZONA", "AZ"],
@@ -448,16 +443,13 @@ def get_conn():
     backend = _current_db_backend()
     if backend == "postgres":
         if psycopg2 is None:
-            st.warning("Postgres backend selected, but psycopg2 is missing. Falling back to local SQLite.")
-        else:
-            try:
-                raw = psycopg2.connect(**_pg_conn_args())
-                return _DBConn(raw, "postgres")
-            except Exception:
-                st.warning("Postgres connection failed. Falling back to local SQLite.")
+            raise RuntimeError("Postgres backend selected but psycopg2 is not installed.")
+        raw = psycopg2.connect(**_pg_conn_args())
+        return _DBConn(raw, "postgres")
 
     raw = sqlite3.connect(DB_PATH, check_same_thread=False)
     return _DBConn(raw, "sqlite")
+
 
 def _parse_cc_sequence(cc_id: str) -> int:
     m = re.match(r"^CC-(\d+)$", str(cc_id or "").strip(), flags=re.I)
@@ -569,13 +561,7 @@ def init_db():
                 action_type TEXT,
                 result_type TEXT,
                 notes TEXT,
-                created_at TEXT,
-                io_channel TEXT,
-                customer_name TEXT,
-                order_no TEXT,
-                phone TEXT,
-                ticket_update_name TEXT,
-                email TEXT
+                created_at TEXT
             )
             """
         )
@@ -605,13 +591,6 @@ def init_db():
             )
             """
         )
-
-        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS io_channel TEXT")
-        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS customer_name TEXT")
-        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS order_no TEXT")
-        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS phone TEXT")
-        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS ticket_update_name TEXT")
-        cur.execute("ALTER TABLE activities ADD COLUMN IF NOT EXISTS email TEXT")
     else:
         cur.execute(
             """
@@ -682,21 +661,6 @@ def init_db():
             """
         )
 
-        cur.execute("PRAGMA table_info(activities)")
-        act_cols = [r[1] for r in cur.fetchall()]
-        if "io_channel" not in act_cols:
-            cur.execute("ALTER TABLE activities ADD COLUMN io_channel TEXT")
-        if "customer_name" not in act_cols:
-            cur.execute("ALTER TABLE activities ADD COLUMN customer_name TEXT")
-        if "order_no" not in act_cols:
-            cur.execute("ALTER TABLE activities ADD COLUMN order_no TEXT")
-        if "phone" not in act_cols:
-            cur.execute("ALTER TABLE activities ADD COLUMN phone TEXT")
-        if "ticket_update_name" not in act_cols:
-            cur.execute("ALTER TABLE activities ADD COLUMN ticket_update_name TEXT")
-        if "email" not in act_cols:
-            cur.execute("ALTER TABLE activities ADD COLUMN email TEXT")
-
     ensure_cc_id_schema_and_backfill(conn)
     conn.commit()
     conn.close()
@@ -754,20 +718,6 @@ def init_v9_state():
         "quick_log_logging_agent": "Ed Torres",
         "quick_log_assigned_owner": "Ed Torres",
         "quick_log_reset_requested": False,
-
-        # Inbound-outbound tracker form
-        "io_form_reset_requested": False,
-        "io_date": date.today(),
-        "io_channels": ["Inbound RingCX"],
-        "io_actions": ["Ticket Updated/Notes"],
-        "io_outcome": "Waiting on Customer",
-        "io_phone": "",
-        "io_name": "",
-        "io_order": "",
-        "io_agent": "Ed Torres",
-        "io_ticket_name": "",
-        "io_email": "",
-        "io_notes": "",
     }
 
     for k, v in defaults.items():
@@ -1384,137 +1334,6 @@ def split_possible_multi_ticket_block(raw_text: str) -> list[str]:
     return [b for b in line_blocks if b.strip()]
 
 
-def extract_labeled_value(raw_text: str, labels: list[str]) -> str:
-    text = clean_text(raw_text)
-    if not text:
-        return ""
-    for label in labels:
-        pattern = rf"(?im)^\s*{re.escape(label)}\s*:\s*(.+)\s*$"
-        m = re.search(pattern, text)
-        if m:
-            return clean_text(m.group(1))
-    return ""
-
-
-def normalize_option(value: str, options: list[str], fallback: str = "") -> str:
-    val = clean_text(value)
-    if not val:
-        return fallback
-
-    for opt in options:
-        if val.lower() == opt.lower():
-            return opt
-
-    for opt in options:
-        if val.lower() in opt.lower() or opt.lower() in val.lower():
-            return opt
-
-    return fallback
-
-
-def extract_pre_sections(raw_text: str) -> tuple[str, str, str]:
-    text = clean_text(raw_text)
-    if not text:
-        return "", "", ""
-
-    problem = ""
-    resolution = ""
-    expectation = ""
-
-    m_problem = re.search(r"(?is)PROBLEM:\s*(.*?)(?=\n\s*RESOLUTION:|\Z)", text)
-    if m_problem:
-        problem = clean_text(m_problem.group(1))
-
-    m_resolution = re.search(r"(?is)RESOLUTION:\s*(.*?)(?=\n\s*EXPECTATION:|\Z)", text)
-    if m_resolution:
-        resolution = clean_text(m_resolution.group(1))
-
-    m_expectation = re.search(r"(?is)EXPECTATION:\s*(.*?)(?=\n\s*[A-Z][A-Z ]{2,}:|\Z)", text)
-    if m_expectation:
-        expectation = clean_text(m_expectation.group(1))
-
-    return problem, resolution, expectation
-
-
-def parse_chat_style_ticket(raw_text: str) -> dict:
-    text = clean_text(raw_text)
-    pref = extract_prefill(text)
-
-    ticket_name = extract_labeled_value(text, ["Ticket Name", "HubSpot Ticket Name", "Ticket/Update name"])
-    owner = extract_labeled_value(text, ["Owner", "Assigned Agent"])
-    stage = extract_labeled_value(text, ["Stage", "HubSpot Stage"])
-    contact = extract_labeled_value(text, ["Contact", "Customer Name"])
-    order_no_labeled = extract_labeled_value(text, ["Order #", "Order Number"])
-    assigned_by_labeled = extract_labeled_value(text, ["Assigned By"])
-
-    customer_name = pref.get("customer_name", "")
-    if contact:
-        name_guess = clean_text(re.sub(r"\(.*?\)", "", contact).split("|")[0])
-        if name_guess:
-            customer_name = name_guess
-
-    order_no = order_no_labeled or pref.get("order_no", "")
-    phone = pref.get("phone", "")
-    if contact and not phone:
-        phone_match = re.search(r"(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})", contact)
-        if phone_match:
-            phone = clean_text(phone_match.group(1))
-
-    issue_type = normalize_option(pref.get("issue_type", ""), ISSUE_TYPES, "Other")
-    request_type = normalize_option(pref.get("request_type", ""), REQUEST_TYPES, "Service")
-    assigned_agent = normalize_option(owner, OWNERS, "Ed Torres")
-    assigned_by = normalize_option(assigned_by_labeled, ASSIGNED_BY_OPTIONS, "")
-    hubspot_stage = normalize_option(stage, HUBSPOT_STAGES, "")
-
-    problem, resolution, expectation = extract_pre_sections(text)
-    summary = ""
-    crm_note = ""
-    if problem and resolution and expectation:
-        summary = (
-            f"PROBLEM: {problem}\n\n"
-            f"RESOLUTION: {resolution}\n\n"
-            f"EXPECTATION: {expectation}"
-        )
-        crm_note = summary
-
-    if not hubspot_stage:
-        lower = text.lower()
-        if "closed" in lower or "ticket closed" in lower:
-            hubspot_stage = "Closed"
-        elif "awaiting customer response" in lower or "waiting on customer" in lower:
-            hubspot_stage = "Awaiting Customer Response"
-        elif "schedule" in lower:
-            hubspot_stage = "Scheduling Pending"
-        else:
-            hubspot_stage = "New"
-
-    internal_status = "Open"
-    if hubspot_stage == "Closed":
-        internal_status = "Closed"
-    elif hubspot_stage == "Awaiting Customer Response":
-        internal_status = "Pending Customer"
-    elif hubspot_stage == "Scheduling Pending":
-        internal_status = "Pending Scheduling"
-    elif "vendor" in text.lower():
-        internal_status = "Pending Internal"
-
-    return {
-        "ticket_name": ticket_name,
-        "customer_name": customer_name,
-        "order_no": order_no,
-        "phone": phone,
-        "issue_type": issue_type,
-        "request_type": request_type,
-        "ticket_source": request_type_to_source(request_type),
-        "assigned_by": assigned_by,
-        "assigned_agent": assigned_agent,
-        "hubspot_stage": hubspot_stage,
-        "internal_status": internal_status,
-        "summary": summary,
-        "crm_note": crm_note,
-    }
-
-
 # =========================================================
 # BUILDER AUTOFILL
 # =========================================================
@@ -1554,18 +1373,6 @@ def apply_builder_pending_autofill():
         elif request_type == "Customer Follow-Up":
             st.session_state["builder_hubspot_stage"] = "Awaiting Customer Response"
             st.session_state["builder_internal_status"] = "Pending Customer"
-
-    if pending.get("assigned_by") in ASSIGNED_BY_OPTIONS:
-        st.session_state["builder_assigned_by"] = pending["assigned_by"]
-
-    if pending.get("assigned_agent") in OWNERS:
-        st.session_state["builder_assigned_agent"] = pending["assigned_agent"]
-
-    if pending.get("hubspot_stage") in HUBSPOT_STAGES:
-        st.session_state["builder_hubspot_stage"] = pending["hubspot_stage"]
-
-    if pending.get("internal_status") in INTERNAL_STATUSES:
-        st.session_state["builder_internal_status"] = pending["internal_status"]
 # =========================================================
 # CONTENT BUILDERS
 # =========================================================
@@ -1817,174 +1624,6 @@ def delete_ticket(ticket_id: int):
 # =========================================================
 # ACTIVITY LOG
 # =========================================================
-
-
-def save_inbound_outbound_entry(entry: dict):
-    raw_channel = entry.get("io_channel")
-    if isinstance(raw_channel, list):
-        channel_labels = [clean_text(x) for x in raw_channel if clean_text(x)]
-        channel = ", ".join(channel_labels)
-    else:
-        channel = clean_text(raw_channel)
-    raw_action = entry.get("action_type")
-    if isinstance(raw_action, list):
-        action_labels = [clean_text(x) for x in raw_action if clean_text(x)]
-        action = ", ".join(action_labels)
-    else:
-        action = clean_text(raw_action)
-    outcome = clean_text(entry.get("result_type"))
-    customer_name = clean_text(entry.get("customer_name"))
-    order_no = clean_text(entry.get("order_no"))
-    phone = clean_text(entry.get("phone"))
-    ticket_update_name = clean_text(entry.get("ticket_update_name"))
-    email = clean_text(entry.get("email"))
-    notes = clean_text(entry.get("notes"))
-    logging_agent = clean_text(entry.get("logging_agent")) or "Ed Torres"
-    assigned_owner = clean_text(entry.get("assigned_owner")) or logging_agent
-
-    activity_date_raw = clean_text(entry.get("activity_date"))
-    if not activity_date_raw:
-        activity_date_raw = today_str()
-
-    activity_ts = f"{activity_date_raw} 09:00:00" if len(activity_date_raw) == 10 else activity_date_raw
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    ticket_id = None
-    if order_no:
-        cur.execute("SELECT id FROM tickets WHERE order_no = ? ORDER BY id DESC LIMIT 1", (order_no,))
-        row = cur.fetchone()
-        if row:
-            ticket_id = int(row[0])
-
-    if ticket_id is None and customer_name:
-        cur.execute("SELECT id FROM tickets WHERE customer_name = ? ORDER BY id DESC LIMIT 1", (customer_name,))
-        row = cur.fetchone()
-        if row:
-            ticket_id = int(row[0])
-
-    if ticket_id is None:
-        ts = now_ts()
-        ticket_title = ticket_update_name or build_ticket_name("Service", "Other", customer_name, order_no)
-        cur.execute(
-            """
-            INSERT INTO tickets (
-                ticket_title, customer_name, order_no, phone, issue_type, request_type, ticket_source,
-                assigned_by, assigned_agent, hubspot_stage, internal_status, attempt_no,
-                last_activity_date, next_followup_date, scheduling_flags, notes_summary, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ticket_title, customer_name, order_no, phone,
-                "Other", "Service", "Internal", "Other", assigned_owner,
-                "New", "Open", 1,
-                activity_date_raw[:10] if activity_date_raw else today_str(),
-                "", "", notes, ts, ts,
-            ),
-        )
-        ticket_id = int(cur.lastrowid)
-
-    cur.execute(
-        """
-        INSERT INTO activities (
-            ticket_id, activity_date, logging_agent, assigned_owner, action_type, result_type, notes, created_at,
-            io_channel, customer_name, order_no, phone, ticket_update_name, email
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            ticket_id, activity_ts, logging_agent, assigned_owner, action, outcome, notes, now_ts(),
-            channel, customer_name, order_no, phone, ticket_update_name, email,
-        ),
-    )
-
-    cur.execute(
-        """
-        UPDATE tickets
-        SET
-            customer_name = COALESCE(NULLIF(?, ''), customer_name),
-            order_no = COALESCE(NULLIF(?, ''), order_no),
-            phone = COALESCE(NULLIF(?, ''), phone),
-            ticket_title = COALESCE(NULLIF(?, ''), ticket_title),
-            notes_summary = COALESCE(NULLIF(?, ''), notes_summary),
-            assigned_agent = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (customer_name, order_no, phone, ticket_update_name, notes, assigned_owner, now_ts(), ticket_id),
-    )
-
-    conn.commit()
-    conn.close()
-
-
-def update_inbound_outbound_entry(entry_id: int, payload: dict) -> bool:
-    if not entry_id:
-        return False
-
-    raw_channel = payload.get("io_channel")
-    if isinstance(raw_channel, list):
-        channel = ", ".join([clean_text(x) for x in raw_channel if clean_text(x)])
-    else:
-        channel = clean_text(raw_channel)
-
-    raw_action = payload.get("action_type")
-    if isinstance(raw_action, list):
-        action = ", ".join([clean_text(x) for x in raw_action if clean_text(x)])
-    else:
-        action = clean_text(raw_action)
-
-    activity_date = clean_text(payload.get("activity_date"))
-    result_type = clean_text(payload.get("result_type"))
-    phone = clean_text(payload.get("phone"))
-    customer_name = clean_text(payload.get("customer_name"))
-    order_no = clean_text(payload.get("order_no"))
-    ticket_update_name = clean_text(payload.get("ticket_update_name"))
-    email = clean_text(payload.get("email"))
-    notes = clean_text(payload.get("notes"))
-    logging_agent = clean_text(payload.get("logging_agent")) or "Ed Torres"
-    assigned_owner = clean_text(payload.get("assigned_owner")) or logging_agent
-
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        UPDATE activities
-        SET
-            activity_date = ?,
-            io_channel = ?,
-            action_type = ?,
-            result_type = ?,
-            phone = ?,
-            customer_name = ?,
-            order_no = ?,
-            ticket_update_name = ?,
-            email = ?,
-            notes = ?,
-            logging_agent = ?,
-            assigned_owner = ?
-        WHERE id = ?
-        """,
-        (
-            activity_date,
-            channel,
-            action,
-            result_type,
-            phone,
-            customer_name,
-            order_no,
-            ticket_update_name,
-            email,
-            notes,
-            logging_agent,
-            assigned_owner,
-            int(entry_id),
-        ),
-    )
-    changed = cur.rowcount > 0
-    conn.commit()
-    conn.close()
-    return changed
 
 def add_activity(ticket_id, logging_agent, assigned_owner, action_type, result_type, notes):
     ticket = get_ticket_by_id(ticket_id)
@@ -2744,101 +2383,6 @@ def do_generate_v9(save_to_tracker=False):
         st.success("Ticket draft generated.")
 
 
-
-def do_generate_chat_style_v9(save_to_tracker=False):
-    raw_details = clean_text(st.session_state.get("builder_raw_details", ""))
-    if not raw_details:
-        st.warning("Paste your full note block first.")
-        return
-
-    parsed = parse_chat_style_ticket(raw_details)
-
-    # Chat-style mode prefers extracted values from the note block.
-    final_customer_name = clean_text(parsed.get("customer_name"))
-    final_order_no = clean_text(parsed.get("order_no"))
-    final_phone = clean_text(parsed.get("phone"))
-    final_request_type = normalize_option(parsed.get("request_type", ""), REQUEST_TYPES, st.session_state.get("builder_request_type", "Service"))
-    final_issue_type = normalize_option(parsed.get("issue_type", ""), ISSUE_TYPES, st.session_state.get("builder_issue_type", "Other"))
-    final_ticket_source = normalize_option(parsed.get("ticket_source", ""), TICKET_SOURCES, st.session_state.get("builder_ticket_source", "Phone"))
-    final_assigned_by = normalize_option(parsed.get("assigned_by", ""), ASSIGNED_BY_OPTIONS, st.session_state.get("builder_assigned_by", "Receptionist"))
-    final_assigned_agent = normalize_option(parsed.get("assigned_agent", ""), OWNERS, st.session_state.get("builder_assigned_agent", "Ed Torres"))
-    final_stage = normalize_option(parsed.get("hubspot_stage", ""), HUBSPOT_STAGES, st.session_state.get("builder_hubspot_stage", "New"))
-    final_status = normalize_option(parsed.get("internal_status", ""), INTERNAL_STATUSES, st.session_state.get("builder_internal_status", "Open"))
-    final_attempt_no = int(st.session_state.get("builder_attempt_no", 1) or 1)
-
-    ticket_name = clean_text(parsed.get("ticket_name"))
-    if not ticket_name:
-        ticket_name = build_ticket_name(
-            final_request_type,
-            final_issue_type,
-            final_customer_name,
-            final_order_no,
-        )
-
-    summary = clean_text(parsed.get("summary"))
-    if not summary:
-        summary = build_hubspot_summary(
-            final_customer_name,
-            final_order_no,
-            final_phone,
-            final_request_type,
-            final_issue_type,
-            final_assigned_by,
-            final_assigned_agent,
-            final_stage,
-            final_status,
-            final_attempt_no,
-            raw_details,
-        )
-
-    crm_note = clean_text(parsed.get("crm_note"))
-    if not crm_note:
-        crm_note = build_crm_note(raw_details, final_request_type, final_issue_type)
-
-    sms = build_customer_sms(
-        final_customer_name,
-        final_order_no,
-        final_request_type,
-        final_issue_type,
-    )
-
-    email_subject, email_body = build_customer_email(
-        final_customer_name,
-        final_order_no,
-        final_issue_type,
-        raw_details,
-    )
-
-    st.session_state["builder_generated_ticket_name"] = ticket_name
-    st.session_state["builder_generated_summary"] = summary
-    st.session_state["builder_generated_crm_note"] = crm_note
-    st.session_state["builder_generated_sms"] = sms
-    st.session_state["builder_generated_email"] = f"Subject: {email_subject}\n\n{email_body}"
-
-    if save_to_tracker:
-        ok, msg = save_generated_ticket_to_tracker(
-            ticket_name=ticket_name,
-            customer_name=final_customer_name,
-            order_no=final_order_no,
-            phone=final_phone,
-            issue_type=final_issue_type,
-            request_type=final_request_type,
-            ticket_source=final_ticket_source,
-            assigned_by=final_assigned_by,
-            assigned_agent=final_assigned_agent,
-            hubspot_stage=final_stage,
-            internal_status=final_status,
-            attempt_no=final_attempt_no,
-            notes_summary=summary,
-        )
-        if ok:
-            st.success(msg)
-        else:
-            st.warning(msg)
-    else:
-        st.success("Assistant-style ticket draft generated.")
-
-
 # =========================================================
 # PAGES
 # =========================================================
@@ -3115,182 +2659,6 @@ def kpi_graph_dashboard_page():
 def ticket_tracker_page():
     st.title("Ticket Tracker")
 
-    if st.session_state.pop("io_form_reset_requested", False):
-        st.session_state["io_date"] = date.today()
-        st.session_state["io_channels"] = ["Inbound RingCX"]
-        st.session_state["io_actions"] = ["Ticket Updated/Notes"]
-        st.session_state["io_outcome"] = "Waiting on Customer"
-        st.session_state["io_phone"] = ""
-        st.session_state["io_name"] = ""
-        st.session_state["io_order"] = ""
-        st.session_state["io_agent"] = "Ed Torres"
-        st.session_state["io_ticket_name"] = ""
-        st.session_state["io_email"] = ""
-        st.session_state["io_notes"] = ""
-
-    st.subheader("Inbound-Outbound Activity Entry")
-    st.caption("Excel-style entry form aligned to Inbound-outbound-Activities.")
-
-    with st.form("io_activity_form"):
-        a1, a2, a3, a4 = st.columns(4)
-        io_date = a1.date_input("Date", value=date.today(), key="io_date")
-        io_channels = a2.multiselect("Inbound/Outbound", IO_CHANNELS, default=["Inbound RingCX"], key="io_channels")
-        io_actions = a3.multiselect("Task or action done", IO_TASK_ACTIONS, default=["Ticket Updated/Notes"], key="io_actions")
-        io_outcome = a4.selectbox("Outcome", IO_OUTCOMES, key="io_outcome")
-
-        b1, b2, b3, b4 = st.columns(4)
-        io_phone = b1.text_input("Phone Number", key="io_phone")
-        io_name = b2.text_input("Name", key="io_name")
-        io_order = b3.text_input("Order #", key="io_order")
-        io_agent = b4.selectbox("Agent", OWNERS, key="io_agent")
-
-        c1, c2 = st.columns(2)
-        io_title = c1.text_input("Ticket Name", key="io_ticket_name")
-        io_email = c2.text_input("Email", key="io_email")
-        io_notes = st.text_area("Notes", key="io_notes", height=140)
-
-        io_save = st.form_submit_button("Save Activity Entry")
-
-    if io_save:
-        save_inbound_outbound_entry(
-            {
-                "activity_date": io_date.isoformat(),
-                "io_channel": io_channels,
-                "action_type": io_actions,
-                "result_type": io_outcome,
-                "phone": io_phone,
-                "customer_name": io_name,
-                "order_no": io_order,
-                "ticket_update_name": io_title,
-                "email": io_email,
-                "notes": io_notes,
-                "logging_agent": io_agent,
-                "assigned_owner": io_agent,
-            }
-        )
-        st.session_state["io_form_reset_requested"] = True
-        st.success("Activity entry saved.")
-        st.rerun()
-
-    conn = get_conn()
-    io_df = _db_read_sql_query("SELECT * FROM activities ORDER BY id DESC", conn)
-    conn.close()
-
-    st.markdown("### Inbound-Outbound Activity Log")
-    io_cols = [c for c in ["id", "activity_date", "io_channel", "action_type", "phone", "customer_name", "order_no", "ticket_update_name", "email", "notes", "result_type", "logging_agent"] if c in io_df.columns]
-    st.dataframe(io_df[io_cols] if not io_df.empty else io_df, use_container_width=True)
-
-    if not io_df.empty:
-        st.markdown("### Edit Existing Inbound-Outbound Entry")
-
-        edit_options = {
-            f"#{int(r['id'])} | {r.get('activity_date', '')} | {r.get('customer_name', '') or 'N/A'} | {r.get('order_no', '') or 'N/A'}": int(r["id"])
-            for _, r in io_df.iterrows()
-        }
-        selected_edit_label = st.selectbox("Select Entry to Edit", list(edit_options.keys()), key="io_edit_select_entry")
-        selected_edit_id = edit_options[selected_edit_label]
-
-        st.info(f"Currently editing entry #{selected_edit_id}: {selected_edit_label}")
-
-        st.session_state.setdefault("io_edit_loaded_id", None)
-
-        def _split_multi(val):
-            return [x.strip() for x in str(val or "").split(",") if x.strip()]
-
-        if st.session_state.get("io_edit_loaded_id") != selected_edit_id:
-            row = io_df[io_df["id"] == selected_edit_id].iloc[0]
-
-            edit_date_default = pd.to_datetime(row.get("activity_date"), errors="coerce")
-            if pd.isna(edit_date_default):
-                edit_date_default = pd.to_datetime(row.get("created_at"), errors="coerce")
-            if pd.isna(edit_date_default):
-                edit_date_default = pd.Timestamp(date.today())
-
-            edit_channels_default = [x for x in _split_multi(row.get("io_channel")) if x in IO_CHANNELS]
-            if not edit_channels_default:
-                edit_channels_default = ["Inbound RingCX"]
-
-            edit_actions_default = [x for x in _split_multi(row.get("action_type")) if x in IO_TASK_ACTIONS]
-            if not edit_actions_default:
-                edit_actions_default = ["Ticket Updated/Notes"]
-
-            outcome_default = row.get("result_type") if row.get("result_type") in IO_OUTCOMES else IO_OUTCOMES[0]
-            agent_default = row.get("logging_agent") if row.get("logging_agent") in OWNERS else OWNERS[0]
-
-            st.session_state["io_edit_date"] = edit_date_default.date()
-            st.session_state["io_edit_channels"] = edit_channels_default
-            st.session_state["io_edit_actions"] = edit_actions_default
-            st.session_state["io_edit_outcome"] = outcome_default
-            st.session_state["io_edit_phone"] = str(row.get("phone") or "")
-            st.session_state["io_edit_name"] = str(row.get("customer_name") or "")
-            st.session_state["io_edit_order"] = str(row.get("order_no") or "")
-            st.session_state["io_edit_agent"] = agent_default
-            st.session_state["io_edit_ticket_name"] = str(row.get("ticket_update_name") or "")
-            st.session_state["io_edit_email"] = str(row.get("email") or "")
-            st.session_state["io_edit_notes"] = str(row.get("notes") or "")
-            st.session_state["io_edit_confirm_delete"] = False
-            st.session_state["io_edit_loaded_id"] = selected_edit_id
-            st.rerun()
-
-        with st.form("io_edit_form"):
-            e1, e2, e3, e4 = st.columns(4)
-            e_date = e1.date_input("Date", key="io_edit_date")
-            e_channels = e2.multiselect("Inbound/Outbound", IO_CHANNELS, key="io_edit_channels")
-            e_actions = e3.multiselect("Task or action done", IO_TASK_ACTIONS, key="io_edit_actions")
-            e_outcome = e4.selectbox("Outcome", IO_OUTCOMES, key="io_edit_outcome")
-
-            f1, f2, f3, f4 = st.columns(4)
-            e_phone = f1.text_input("Phone Number", key="io_edit_phone")
-            e_name = f2.text_input("Name", key="io_edit_name")
-            e_order = f3.text_input("Order #", key="io_edit_order")
-            e_agent = f4.selectbox("Agent", OWNERS, key="io_edit_agent")
-
-            g1, g2 = st.columns(2)
-            e_title = g1.text_input("Ticket Name", key="io_edit_ticket_name")
-            e_email = g2.text_input("Email", key="io_edit_email")
-            e_notes = st.text_area("Notes", height=140, key="io_edit_notes")
-
-            confirm_delete = st.checkbox("Confirm delete this entry", key="io_edit_confirm_delete")
-            h1, h2 = st.columns(2)
-            edit_save = h1.form_submit_button("Save Entry Changes")
-            edit_delete = h2.form_submit_button("Delete Entry")
-
-        if edit_save:
-            changed = update_inbound_outbound_entry(
-                selected_edit_id,
-                {
-                    "activity_date": e_date.isoformat(),
-                    "io_channel": e_channels,
-                    "action_type": e_actions,
-                    "result_type": e_outcome,
-                    "phone": e_phone,
-                    "customer_name": e_name,
-                    "order_no": e_order,
-                    "ticket_update_name": e_title,
-                    "email": e_email,
-                    "notes": e_notes,
-                    "logging_agent": e_agent,
-                    "assigned_owner": e_agent,
-                },
-            )
-            if changed:
-                st.success("Inbound-Outbound entry updated.")
-            else:
-                st.warning("No changes were saved.")
-            st.rerun()
-
-        if edit_delete:
-            if not confirm_delete:
-                st.warning("Please check confirm delete before deleting.")
-            else:
-                deleted = delete_activity_by_id(selected_edit_id)
-                if deleted:
-                    st.success("Inbound-Outbound entry deleted.")
-                else:
-                    st.warning("Could not delete entry.")
-                st.rerun()
-
-    st.divider()
     if st.session_state.pop("tracker_new_reset_requested", False):
         for k, v in {
             "tracker_new_ticket_title": "",
@@ -3676,31 +3044,6 @@ def hubspot_ticket_builder_page_v9():
         key="builder_raw_details",
         height=220,
     )
-
-    st.caption("Assistant-style: paste your full ChatGPT/LACB note block and use Assistant-Style Generate for one-click draft creation.")
-    q1, q2, q3 = st.columns(3)
-    if q1.button("Assistant-Style Auto Fill Form", key="builder_chat_autofill"):
-        parsed = parse_chat_style_ticket(st.session_state.get("builder_raw_details", ""))
-        pref = {
-            "customer_name": parsed.get("customer_name", ""),
-            "order_no": parsed.get("order_no", ""),
-            "phone": parsed.get("phone", ""),
-            "issue_type": parsed.get("issue_type", ""),
-            "request_type": parsed.get("request_type", ""),
-            "ticket_source": parsed.get("ticket_source", ""),
-            "assigned_by": parsed.get("assigned_by", ""),
-            "assigned_agent": parsed.get("assigned_agent", ""),
-            "hubspot_stage": parsed.get("hubspot_stage", ""),
-            "internal_status": parsed.get("internal_status", ""),
-        }
-        st.session_state["builder_pending_autofill"] = pref
-        st.rerun()
-
-    if q2.button("Assistant-Style Generate", key="builder_chat_generate"):
-        do_generate_chat_style_v9(save_to_tracker=False)
-
-    if q3.button("Assistant-Style Generate + Add to Tracker", key="builder_chat_generate_save"):
-        do_generate_chat_style_v9(save_to_tracker=True)
 
     c1, c2, c3 = st.columns(3)
 
@@ -4237,135 +3580,8 @@ def lacb_assistant_page():
                 st.write(msg["content"])
 
 
-
-
-
-def migrate_sqlite_file_to_current_backend(sqlite_file_path: str, truncate_first: bool = False):
-    backend = _current_db_backend()
-    if backend != "postgres":
-        return False, "Current backend is not Postgres. Set DB_BACKEND=postgres first.", {}
-
-    tables = [
-        "tickets",
-        "activities",
-        "manual_tallies",
-        "assistant_prompt_templates",
-    ]
-
-    source_conn = sqlite3.connect(sqlite_file_path)
-    dest_conn = get_conn()
-
-    migrated = {}
-    try:
-        source_cur = source_conn.cursor()
-        dest_cur = dest_conn.cursor()
-
-        for table in tables:
-            source_cur.execute(f"PRAGMA table_info({table})")
-            source_cols = [r[1] for r in source_cur.fetchall()]
-            if not source_cols:
-                migrated[table] = 0
-                continue
-
-            dest_cols = _table_columns(dest_conn, table)
-            common_cols = [c for c in source_cols if c in dest_cols]
-            if not common_cols:
-                migrated[table] = 0
-                continue
-
-            source_cur.execute(f"SELECT {', '.join(common_cols)} FROM {table}")
-            rows = source_cur.fetchall()
-
-            if truncate_first:
-                dest_cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
-
-            if not rows:
-                migrated[table] = 0
-                continue
-
-            col_list = ", ".join(common_cols)
-            placeholders = ", ".join(["?"] * len(common_cols))
-
-            if "id" in common_cols:
-                update_cols = [c for c in common_cols if c != "id"]
-                if update_cols:
-                    update_set = ", ".join([f"{c}=EXCLUDED.{c}" for c in update_cols])
-                    upsert_sql = (
-                        f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) "
-                        f"ON CONFLICT (id) DO UPDATE SET {update_set}"
-                    )
-                else:
-                    upsert_sql = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders}) ON CONFLICT (id) DO NOTHING"
-            else:
-                upsert_sql = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"
-
-            dest_cur.executemany(upsert_sql, rows)
-            migrated[table] = len(rows)
-
-            if "id" in common_cols:
-                dest_cur.execute(
-                    f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1), true)"
-                )
-
-        dest_conn.commit()
-        return True, "SQLite to Postgres migration completed.", migrated
-    except Exception as ex:
-        try:
-            dest_conn.rollback()
-        except Exception:
-            pass
-        return False, f"Migration failed: {ex}", migrated
-    finally:
-        source_conn.close()
-        dest_conn.close()
-
 def history_export_page():
     st.title("History / Export")
-
-    backend = _current_db_backend()
-    with st.expander("Admin: Migrate SQLite to Postgres", expanded=False):
-        st.caption("Upload your previous local SQLite .db file to migrate historical data into Supabase/Postgres.")
-        st.write(f"Current backend: **{backend}**")
-        upload_db = st.file_uploader(
-            "Upload SQLite database file",
-            type=["db", "sqlite", "sqlite3"],
-            key="sqlite_migrate_upload",
-        )
-        truncate_first = st.checkbox(
-            "Replace current Postgres data first (TRUNCATE)",
-            value=False,
-            key="sqlite_migrate_truncate",
-        )
-
-        if st.button("Run SQLite -> Postgres Migration", key="sqlite_migrate_run_btn"):
-            if backend != "postgres":
-                st.warning("Set DB_BACKEND=postgres in secrets before running migration.")
-            elif not upload_db:
-                st.warning("Please upload a .db file first.")
-            else:
-                import tempfile
-
-                temp_path = ""
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
-                        tmp.write(upload_db.getbuffer())
-                        temp_path = tmp.name
-
-                    ok, msg, detail = migrate_sqlite_file_to_current_backend(temp_path, truncate_first=truncate_first)
-                    if ok:
-                        st.success(msg)
-                        if detail:
-                            st.write("Rows migrated:")
-                            st.json(detail)
-                        st.info("Refresh page tabs to see imported data.")
-                    else:
-                        st.error(msg)
-                        if detail:
-                            st.write("Progress before failure:")
-                            st.json(detail)
-                finally:
-                    if temp_path and os.path.exists(temp_path):
-                        os.unlink(temp_path)
 
     conn = get_conn()
     df_activities = _db_read_sql_query(
@@ -4374,20 +3590,16 @@ def history_export_page():
             a.id,
             a.ticket_id,
             t.cc_id,
-            COALESCE(a.ticket_update_name, t.ticket_title) AS ticket_title,
-            COALESCE(NULLIF(a.customer_name, ''), t.customer_name) AS customer_name,
-            COALESCE(NULLIF(a.order_no, ''), t.order_no) AS order_no,
+            t.ticket_title,
+            t.customer_name,
+            t.order_no,
             a.activity_date,
             a.logging_agent,
             a.assigned_owner,
-            a.io_channel,
             a.action_type,
             a.result_type,
-            a.phone,
-            a.email,
             a.notes,
-            a.created_at,
-            a.ticket_update_name
+            a.created_at
         FROM activities a
         LEFT JOIN tickets t ON t.id = a.ticket_id
         ORDER BY a.id DESC
@@ -4398,171 +3610,75 @@ def history_export_page():
 
     df_tickets = get_all_tickets_df()
 
-    tab_io, tab_activity, tab_tickets = st.tabs([
-        "Inbound-Outbound Export",
-        "Activity History",
-        "Ticket History",
-    ])
+    st.subheader("Activity History")
+    owner_filter = st.selectbox("Owner Filter", ["All"] + OWNERS, key="history_owner_filter")
+    history_search = st.text_input("History Search", key="history_search")
 
-    with tab_io:
-        st.subheader("Inbound-Outbound Activity Log")
+    filtered_activities = df_activities.copy()
+    if owner_filter != "All" and not filtered_activities.empty:
+        filtered_activities = filtered_activities[
+            (filtered_activities["logging_agent"] == owner_filter)
+            | (filtered_activities["assigned_owner"] == owner_filter)
+        ]
 
-        io_df = df_activities.copy()
-
-        for col in [
-            "io_channel", "action_type", "result_type", "phone", "customer_name", "order_no",
-            "ticket_update_name", "email", "notes", "logging_agent", "activity_date", "created_at"
-        ]:
-            if col not in io_df.columns:
-                io_df[col] = ""
-
-        io_df["activity_dt"] = pd.to_datetime(io_df["activity_date"], errors="coerce")
-        missing_mask = io_df["activity_dt"].isna()
-        if missing_mask.any():
-            io_df.loc[missing_mask, "activity_dt"] = pd.to_datetime(io_df.loc[missing_mask, "created_at"], errors="coerce")
-        io_df["activity_day"] = io_df["activity_dt"].dt.date
-
-        c1, c2, c3 = st.columns(3)
-        date_mode = c1.selectbox(
-            "Date Filter",
-            ["All Dates", "Single Date", "Date Range"],
-            key="history_io_date_mode",
+    if history_search and not filtered_activities.empty:
+        s = history_search.lower()
+        mask = (
+            filtered_activities["ticket_title"].fillna("").str.lower().str.contains(s)
+            | filtered_activities["customer_name"].fillna("").str.lower().str.contains(s)
+            | filtered_activities["order_no"].fillna("").str.lower().str.contains(s)
+            | filtered_activities["notes"].fillna("").str.lower().str.contains(s)
         )
-        owner_filter = c2.selectbox("Owner Filter", ["All"] + OWNERS, key="history_io_owner_filter")
-        io_search = c3.text_input("Search", key="history_io_search", placeholder="name, order, ticket, notes, phone")
+        filtered_activities = filtered_activities[mask]
 
-        if date_mode == "Single Date":
-            target_date = st.date_input("Activity Date", value=date.today(), key="history_io_single_date")
-            io_df = io_df[io_df["activity_day"] == target_date]
-        elif date_mode == "Date Range":
-            r1, r2 = st.columns(2)
-            start_date = r1.date_input("Start Date", value=date.today() - timedelta(days=7), key="history_io_start_date")
-            end_date = r2.date_input("End Date", value=date.today(), key="history_io_end_date")
-            if end_date < start_date:
-                st.warning("End date cannot be before start date.")
-            else:
-                io_df = io_df[
-                    (io_df["activity_day"] >= start_date)
-                    & (io_df["activity_day"] <= end_date)
-                ]
+    st.dataframe(filtered_activities, use_container_width=True)
 
-        if owner_filter != "All" and not io_df.empty:
-            io_df = io_df[
-                (io_df["logging_agent"] == owner_filter)
-                | (io_df["assigned_owner"] == owner_filter)
-            ]
+    st.subheader("Ticket History")
+    filtered_tickets = df_tickets.copy()
+    if owner_filter != "All" and not filtered_tickets.empty:
+        filtered_tickets = filtered_tickets[filtered_tickets["assigned_agent"] == owner_filter]
 
-        if io_search and not io_df.empty:
-            s = io_search.lower()
-            io_df = io_df[
-                io_df["customer_name"].fillna("").astype(str).str.lower().str.contains(s)
-                | io_df["order_no"].fillna("").astype(str).str.lower().str.contains(s)
-                | io_df["ticket_title"].fillna("").astype(str).str.lower().str.contains(s)
-                | io_df["ticket_update_name"].fillna("").astype(str).str.lower().str.contains(s)
-                | io_df["notes"].fillna("").astype(str).str.lower().str.contains(s)
-                | io_df["phone"].fillna("").astype(str).str.lower().str.contains(s)
-                | io_df["email"].fillna("").astype(str).str.lower().str.contains(s)
-            ]
+    if history_search and not filtered_tickets.empty:
+        s = history_search.lower()
+        mask = (
+            filtered_tickets["ticket_title"].fillna("").str.lower().str.contains(s)
+            | filtered_tickets["customer_name"].fillna("").str.lower().str.contains(s)
+            | filtered_tickets["order_no"].fillna("").str.lower().str.contains(s)
+            | filtered_tickets["notes_summary"].fillna("").str.lower().str.contains(s)
+        )
+        filtered_tickets = filtered_tickets[mask]
 
-        io_export = pd.DataFrame({
-            "Date": io_df["activity_day"].astype(str).replace("NaT", ""),
-            "Inbound/Outbound": io_df["io_channel"].fillna(""),
-            "Task or action done": io_df["action_type"].fillna(""),
-            "Phone Number": io_df["phone"].fillna(""),
-            "Name": io_df["customer_name"].fillna(""),
-            "Order #": io_df["order_no"].fillna(""),
-            "Ticket/Update name": io_df["ticket_update_name"].fillna(io_df["ticket_title"]).fillna(""),
-            "Email": io_df["email"].fillna(""),
-            "Notes (Optional)": io_df["notes"].fillna(""),
-            "Outcome": io_df["result_type"].fillna(""),
-            "Agent": io_df["logging_agent"].fillna(""),
-        })
+    st.dataframe(filtered_tickets, use_container_width=True)
 
-        st.dataframe(io_export, use_container_width=True, hide_index=True)
+    st.subheader("Ticket Timeline Lookup")
+    if not df_tickets.empty:
+        options = {
+            f"{row.get('cc_id', '') or '-'} | {int(row['id'])} | {row.get('ticket_title', '')}": int(row["id"])
+            for _, row in df_tickets.iterrows()
+        }
+        selected = st.selectbox("Select Ticket for Timeline", list(options.keys()), key="history_timeline_select")
+        selected_id = options[selected]
 
-        b1, b2 = st.columns(2)
-        with b1:
-            st.download_button(
-                "Download Inbound-Outbound CSV",
-                data=io_export.to_csv(index=False).encode("utf-8"),
-                file_name="LACB_Inbound_Outbound_Activities_Export.csv",
-                mime="text/csv",
-                key="download_io_csv",
-            )
-        with b2:
-            xbuf = io.BytesIO()
-            with pd.ExcelWriter(xbuf, engine="openpyxl") as writer:
-                io_export.to_excel(writer, index=False, sheet_name="Inbound-outbound-Activities")
-            st.download_button(
-                "Download Inbound-Outbound Excel (Team Template Name)",
-                data=xbuf.getvalue(),
-                file_name="LACB_Inbound_Outbound_Activities_Team_Clean_v13_Scheduling_Typo_Fixed.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_io_xlsx",
-            )
+        timeline = filtered_activities[filtered_activities["ticket_id"] == selected_id]
+        if timeline.empty:
+            st.info("No activity history for this ticket yet.")
+        else:
+            st.dataframe(timeline, use_container_width=True)
 
-    with tab_activity:
-        st.subheader("Activity History")
-        owner_filter = st.selectbox("Owner Filter", ["All"] + OWNERS, key="history_owner_filter")
-        history_search = st.text_input("History Search", key="history_search")
-
-        filtered_activities = df_activities.copy()
-        if owner_filter != "All" and not filtered_activities.empty:
-            filtered_activities = filtered_activities[
-                (filtered_activities["logging_agent"] == owner_filter)
-                | (filtered_activities["assigned_owner"] == owner_filter)
-            ]
-
-        if history_search and not filtered_activities.empty:
-            s = history_search.lower()
-            mask = (
-                filtered_activities["ticket_title"].fillna("").str.lower().str.contains(s)
-                | filtered_activities["customer_name"].fillna("").str.lower().str.contains(s)
-                | filtered_activities["order_no"].fillna("").str.lower().str.contains(s)
-                | filtered_activities["notes"].fillna("").str.lower().str.contains(s)
-                | filtered_activities["io_channel"].fillna("").str.lower().str.contains(s)
-                | filtered_activities["action_type"].fillna("").str.lower().str.contains(s)
-            )
-            filtered_activities = filtered_activities[mask]
-
-        st.dataframe(filtered_activities, use_container_width=True)
-
+    c1, c2 = st.columns(2)
+    with c1:
         st.download_button(
             "Download Activities CSV",
             data=filtered_activities.to_csv(index=False).encode("utf-8"),
             file_name="lacb_activity_history.csv",
             mime="text/csv",
-            key="download_activities_csv",
         )
-
-    with tab_tickets:
-        st.subheader("Ticket History")
-
-        owner_filter_t = st.selectbox("Owner Filter", ["All"] + OWNERS, key="history_owner_filter_tickets")
-        history_search_t = st.text_input("Ticket Search", key="history_search_tickets")
-
-        filtered_tickets = df_tickets.copy()
-        if owner_filter_t != "All" and not filtered_tickets.empty:
-            filtered_tickets = filtered_tickets[filtered_tickets["assigned_agent"] == owner_filter_t]
-
-        if history_search_t and not filtered_tickets.empty:
-            s = history_search_t.lower()
-            mask = (
-                filtered_tickets["ticket_title"].fillna("").str.lower().str.contains(s)
-                | filtered_tickets["customer_name"].fillna("").str.lower().str.contains(s)
-                | filtered_tickets["order_no"].fillna("").str.lower().str.contains(s)
-                | filtered_tickets["notes_summary"].fillna("").str.lower().str.contains(s)
-            )
-            filtered_tickets = filtered_tickets[mask]
-
-        st.dataframe(filtered_tickets, use_container_width=True)
-
+    with c2:
         st.download_button(
             "Download Tickets CSV",
             data=filtered_tickets.to_csv(index=False).encode("utf-8"),
             file_name="lacb_ticket_history.csv",
             mime="text/csv",
-            key="download_tickets_csv",
         )
 
 # =========================================================
