@@ -3,6 +3,7 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -186,6 +187,14 @@ OWNERS = [
     "Erika Sagasta",
 ]
 
+KPI_AGENTS = [
+    "Ed Torres",
+    "Erika Sagasta",
+    "User 3",
+    "User 4",
+    "User 5",
+]
+
 MANUAL_TALLY_TYPES = [
     "Inbound RingCX",
     "Inbound RingCentral",
@@ -197,29 +206,42 @@ MANUAL_TALLY_TYPES = [
 
 IO_CHANNELS = [
     "Inbound RingCX",
-    "OutboundRingCX",
-    "Inbound RC",
-    "Outbound RC",
+    "Outbound RingCX",
+    "Inbound RC (MVP)",
+    "Outbound RC (MVP)",
     "SMS",
-    "RC Chat Scheduling",
     "Email",
-    "Service Order Created",
-    "Internal RC Chat",
-    "Hubspot Ticket Update",
+    "Internal Chat Other",
+    "Internal Chat Scheduling",
+    "Internal Chat DC",
+    "New HubSpot Ticket Assigned",
+    "HubSpot Ticket Update/Follow-Up",
     "Task Review",
 ]
 
 IO_TASK_ACTIONS = [
-    "New Ticket Assigned - Receptionist",
-    "New Ticket Assigned - Supervisor",
-    "New Ticket Assigned - Sales",
-    "New Ticket Assigned - Other",
-    "New Ticket Created",
     "Ticket Updated/Notes",
     "Ticket Closed",
-    "Ticket Reassigned/ReOpened",
+    "New Ticket Created",
+    "New Ticket Assigned - Receptionist",
+    "New Ticket Assigned - Supervisor",
+    "New Ticket Assigned - Sales Team",
+    "New Ticket Assigned - By Other",
+    "Service Order Created",
+    "Scheduled/Booked Service Appt",
+    "Transferred call Sales",
+    "Transferred call Agent",
+    "Transferred call Scheduling",
+    "Transferred call Other",
     "Task Updated",
     "Task Marked Complete",
+    "Called Vendor",
+    "Emailed Vendor",
+    "Call w/ DC",
+    "SMS w/ DC",
+    "Call w/ IC Scheduling",
+    "Call w/ internal team member",
+    "Called Installer",
 ]
 
 IO_OUTCOMES = [
@@ -772,6 +794,10 @@ def init_v9_state():
 
 def now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def now_pacific_ts() -> str:
+    return datetime.now(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
 def today_str() -> str:
@@ -1846,7 +1872,7 @@ def save_inbound_outbound_activity_entry(
 
     conn = get_conn()
     cur = conn.cursor()
-    ts = now_ts()
+    ts = now_pacific_ts()
 
     cur.execute(
         """
@@ -2612,7 +2638,7 @@ def kpi_dashboard_page():
 
     c1, c2 = st.columns([1, 1])
     with c1:
-        owner_filter = st.selectbox("Agent Filter", ["All Agents"] + OWNERS, key="kpi_owner_view")
+        owner_filter = st.selectbox("Agent Filter", ["All Agents"] + KPI_AGENTS, key="kpi_owner_view")
     with c2:
         time_view, start_date, end_date = _kpi_pick_period("kpi")
 
@@ -2639,17 +2665,17 @@ def kpi_dashboard_page():
         ("Total Activities", total_activities),
         ("Inbound RingCX", _kpi_token_count(df_activities, "io_channel", "Inbound RingCX")),
         ("Outbound RingCX", _kpi_token_count(df_activities, "io_channel", "Outbound RingCX")),
-        ("Inbound RC", _kpi_token_count(df_activities, "io_channel", "Inbound RC")),
-        ("Outbound RC", _kpi_token_count(df_activities, "io_channel", "Outbound RC")),
+        ("Inbound RC", _kpi_token_count(df_activities, "io_channel", "Inbound RC (MVP)")),
+        ("Outbound RC", _kpi_token_count(df_activities, "io_channel", "Outbound RC (MVP)")),
         ("SMS", _kpi_token_count(df_activities, "io_channel", "SMS")),
         ("Email", _kpi_token_count(df_activities, "io_channel", "Email")),
-        ("Service Orders Created", _kpi_token_count(df_activities, "io_channel", "Service Order Created")),
+        ("Service Orders Created", _kpi_token_count(df_activities, "action_type", "Service Order Created")),
         (
             "Tickets Assigned",
             _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Receptionist")
             + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Supervisor")
-            + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Sales")
-            + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Other"),
+            + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - Sales Team")
+            + _kpi_token_count(df_activities, "action_type", "New Ticket Assigned - By Other"),
         ),
         ("Tickets Created", _kpi_token_count(df_activities, "action_type", "New Ticket Created")),
         ("Tickets Updated", _kpi_token_count(df_activities, "action_type", "Ticket Updated/Notes")),
@@ -2722,7 +2748,7 @@ def kpi_graph_dashboard_page():
     with c1:
         owner_filter = st.selectbox(
             "Agent Filter",
-            ["All Agents"] + OWNERS,
+            ["All Agents"] + KPI_AGENTS,
             key="kpi_graph_owner_view",
         )
     with c2:
@@ -2763,11 +2789,11 @@ def kpi_graph_dashboard_page():
             [
                 {"Metric": "Inbound RingCX", "Count": _kpi_token_count(df_activities, "io_channel", "Inbound RingCX")},
                 {"Metric": "Outbound RingCX", "Count": _kpi_token_count(df_activities, "io_channel", "Outbound RingCX")},
-                {"Metric": "Inbound RC", "Count": _kpi_token_count(df_activities, "io_channel", "Inbound RC")},
-                {"Metric": "Outbound RC", "Count": _kpi_token_count(df_activities, "io_channel", "Outbound RC")},
+                {"Metric": "Inbound RC", "Count": _kpi_token_count(df_activities, "io_channel", "Inbound RC (MVP)")},
+                {"Metric": "Outbound RC", "Count": _kpi_token_count(df_activities, "io_channel", "Outbound RC (MVP)")},
                 {"Metric": "SMS", "Count": _kpi_token_count(df_activities, "io_channel", "SMS")},
                 {"Metric": "Email", "Count": _kpi_token_count(df_activities, "io_channel", "Email")},
-                {"Metric": "Service Orders Created", "Count": _kpi_token_count(df_activities, "io_channel", "Service Order Created")},
+                {"Metric": "Service Orders Created", "Count": _kpi_token_count(df_activities, "action_type", "Service Order Created")},
                 {"Metric": "Tickets Updated", "Count": _kpi_token_count(df_activities, "action_type", "Ticket Updated/Notes")},
             ]
         )
@@ -2780,6 +2806,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
     else:
         st.title("Inbound / Outbound Activity Log")
     st.caption("Log channel activity entries that should feed the KPI dashboard.")
+    st.caption(f"Auto Timestamp (Pacific): {now_pacific_ts()}")
 
     if st.session_state.pop("io_reset_requested", False):
         for key, value in {
@@ -2804,8 +2831,8 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
         with c1:
             logging_agent = st.selectbox(
                 "Logging Agent",
-                OWNERS,
-                index=OWNERS.index(st.session_state.get("io_logging_agent", OWNERS[0])),
+                KPI_AGENTS,
+                index=KPI_AGENTS.index(st.session_state.get("io_logging_agent", KPI_AGENTS[0])),
                 key="io_logging_agent",
             )
             io_channel = st.selectbox("Channel", IO_CHANNELS, key="io_channel")
@@ -2851,7 +2878,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
         """
         SELECT
             id,
-            activity_date,
+            activity_date AS timestamp_pacific,
             logging_agent,
             io_channel,
             action_type,
@@ -3819,7 +3846,7 @@ def history_export_page():
             a.io_channel,
             a.phone,
             a.email,
-            a.activity_date,
+            a.activity_date AS timestamp_pacific,
             a.logging_agent,
             a.assigned_owner,
             a.action_type,
@@ -3837,7 +3864,7 @@ def history_export_page():
     df_tickets = get_all_tickets_df()
 
     st.subheader("Activity History")
-    owner_filter = st.selectbox("Owner Filter", ["All"] + OWNERS, key="history_owner_filter")
+    owner_filter = st.selectbox("Owner Filter", ["All"] + KPI_AGENTS, key="history_owner_filter")
     history_search = st.text_input("History Search", key="history_search")
 
     filtered_activities = df_activities.copy()
