@@ -352,7 +352,7 @@ SCHEDULING_FLAGS = [
 REGION_ALIASES = {
     "LA": ["LA", "LOS ANGELES"],
     "OC": ["OC", "ORANGE COUNTY"],
-    "IE": ["IE", "INLAND EMPIRE", "RIVERSIDE"],
+    "IE": ["IE", "IE/RIVERSIDE", "INLAND EMPIRE", "RIVERSIDE"],
     "SD": ["SD", "SAN DIEGO"],
     "PS": ["PS", "PALM SPRINGS"],
     "ARIZONA": ["ARIZONA", "AZ"],
@@ -912,8 +912,13 @@ def load_scheduler_dashboard():
 
 def normalize_region_for_dashboard(region_value):
     val = str(region_value or "").strip().upper()
+    norm_val = _norm_col_name(val)
     for canonical, aliases in REGION_ALIASES.items():
-        if val in [a.upper() for a in aliases]:
+        alias_upper = [a.upper() for a in aliases]
+        alias_norm = [_norm_col_name(a) for a in aliases]
+        if val in alias_upper or norm_val in alias_norm:
+            return canonical
+        if any(alias and alias in norm_val for alias in alias_norm):
             return canonical
     return val
 
