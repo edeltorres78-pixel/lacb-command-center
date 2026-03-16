@@ -2181,6 +2181,217 @@ def recommended_next_action(attempt_no: int, status: str) -> str:
     return "Final review / close"
 
 
+def _parse_app_timestamp(value: str) -> datetime | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    text = re.sub(r"\s+[A-Z]{3}$", "", text)
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _normalize_followup_name(value: str) -> str:
+    return re.sub(r"\s+", " ", clean_text(value).lower()).strip()
+
+
+def _normalize_followup_phone(value: str) -> str:
+    digits = re.sub(r"\D", "", clean_text(value))
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _normalize_followup_order(value: str) -> str:
+    return re.sub(r"\s+", "", clean_text(value).lower())
+
+
+def _is_followup_outcome(value: str) -> bool:
+    return "follow up" in clean_text(value).lower()
+
+
+def _is_resolved_activity(action_type: str, result_type: str, internal_status: str = "") -> bool:
+    action = clean_text(action_type).lower()
+    result = clean_text(result_type).lower()
+    status = clean_text(internal_status).lower()
+    return (
+        result in {"closed/resolved", "closed", "resolved"}
+        or "ticket closed" in action
+        or status == "closed"
+    )
+
+
+def _build_followup_activity_groups():
+    conn = get_conn()
+    df = _db_read_sql_query(
+        """
+        SELECT
+            a.id,
+            a.ticket_id,
+            COALESCE(a.ticket_update_name, t.ticket_title) AS ticket_title,
+            COALESCE(a.customer_name, t.customer_name) AS customer_name,
+            COALESCE(a.order_no, t.order_no) AS order_no,
+            COALESCE(a.phone, t.phone) AS phone,
+            a.email,
+            a.io_channel,
+            a.activity_date,
+            a.logging_agent,
+            a.assigned_owner,
+            a.action_type,
+            a.result_type,
+            a.notes,
+            t.next_followup_date,
+            t.internal_status
+        FROM activities a
+        LEFT JOIN tickets t ON t.id = a.ticket_id
+        ORDER BY a.id ASC
+        """,
+        conn,
+    )
+    conn.close()
+
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame(), {}
+
+    parent = list(range(len(df)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra = find(a)
+        rb = find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    seen_identifiers = {}
+    for idx, row in df.iterrows():
+        identifiers = []
+        order_no = _normalize_followup_order(row.get("order_no", ""))
+        phone = _normalize_followup_phone(row.get("phone", ""))
+        customer_name = _normalize_followup_name(row.get("customer_name", ""))
+        if order_no:
+            identifiers.append(f"order:{order_no}")
+        if phone:
+            identifiers.append(f"phone:{phone}")
+        if customer_name:
+            identifiers.append(f"name:{customer_name}")
+        if not identifiers:
+            identifiers.append(f"row:{int(row['id'])}")
+
+        for identifier in identifiers:
+            if identifier in seen_identifiers:
+                union(idx, seen_identifiers[identifier])
+            else:
+                seen_identifiers[identifier] = idx
+
+    grouped_rows = {}
+    for idx, row in df.iterrows():
+        root = find(idx)
+        grouped_rows.setdefault(root, []).append(row.to_dict())
+
+    open_groups = []
+    resolved_groups = []
+    timelines = {}
+
+    for root, rows in grouped_rows.items():
+        rows = sorted(
+            rows,
+            key=lambda r: (_parse_app_timestamp(r.get("activity_date", "")) or datetime.min, int(r.get("id", 0))),
+        )
+        followup_rows = [r for r in rows if _is_followup_outcome(r.get("result_type", ""))]
+        if not followup_rows:
+            continue
+
+        latest_followup_dt = max(
+            (_parse_app_timestamp(r.get("activity_date", "")) or datetime.min) for r in followup_rows
+        )
+        resolved_rows = [
+            r for r in rows
+            if _is_resolved_activity(r.get("action_type", ""), r.get("result_type", ""), r.get("internal_status", ""))
+            and (_parse_app_timestamp(r.get("activity_date", "")) or datetime.min) >= latest_followup_dt
+        ]
+        is_resolved = bool(resolved_rows)
+
+        latest_row = rows[-1]
+        first_dt = _parse_app_timestamp(rows[0].get("activity_date", ""))
+        last_dt = _parse_app_timestamp(latest_row.get("activity_date", ""))
+        resolution_dt = max(
+            (_parse_app_timestamp(r.get("activity_date", "")) or datetime.min) for r in resolved_rows
+        ) if resolved_rows else None
+
+        def latest_nonempty(field_name: str) -> str:
+            for row in reversed(rows):
+                value = clean_text(row.get(field_name, ""))
+                if value:
+                    return value
+            return ""
+
+        next_followup_candidates = [clean_text(r.get("next_followup_date", "")) for r in rows if clean_text(r.get("next_followup_date", ""))]
+        if next_followup_candidates:
+            followup_date = min(next_followup_candidates)
+        elif latest_followup_dt and latest_followup_dt != datetime.min:
+            followup_date = add_business_days(latest_followup_dt.date(), 1).isoformat()
+        else:
+            followup_date = ""
+
+        group_key = f"FU-{root + 1}"
+        summary = {
+            "group_key": group_key,
+            "ticket_title": latest_nonempty("ticket_title"),
+            "customer_name": latest_nonempty("customer_name"),
+            "order_no": latest_nonempty("order_no"),
+            "phone": latest_nonempty("phone"),
+            "email": latest_nonempty("email"),
+            "follow_up_date": followup_date,
+            "last_activity": clean_text(latest_row.get("activity_date", "")),
+            "latest_action": clean_text(latest_row.get("action_type", "")),
+            "latest_outcome": clean_text(latest_row.get("result_type", "")),
+            "manual_agents": ", ".join(sorted({clean_text(r.get("logging_agent", "")) for r in rows if clean_text(r.get("logging_agent", ""))})),
+            "entries": len(rows),
+            "status": "Resolved" if is_resolved else "Open Follow-Up",
+            "first_activity": first_dt.strftime("%Y-%m-%d %H:%M:%S") if first_dt else "",
+            "resolved_at": resolution_dt.strftime("%Y-%m-%d %H:%M:%S") if resolution_dt else "",
+            "lifetime_days": ((resolution_dt or last_dt or first_dt or datetime.min) - (first_dt or datetime.min)).days if first_dt else 0,
+        }
+
+        timeline_df = pd.DataFrame(rows)
+        if not timeline_df.empty:
+            keep_cols = [
+                "activity_date",
+                "io_channel",
+                "action_type",
+                "result_type",
+                "customer_name",
+                "order_no",
+                "phone",
+                "email",
+                "ticket_title",
+                "logging_agent",
+                "assigned_owner",
+                "notes",
+            ]
+            keep_cols = [c for c in keep_cols if c in timeline_df.columns]
+            timelines[group_key] = timeline_df[keep_cols].sort_values(by="activity_date", ascending=False)
+
+        if is_resolved:
+            resolved_groups.append(summary)
+        else:
+            open_groups.append(summary)
+
+    open_df = pd.DataFrame(open_groups)
+    resolved_df = pd.DataFrame(resolved_groups)
+    if not open_df.empty:
+        open_df = open_df.sort_values(by=["follow_up_date", "last_activity"], ascending=[True, False])
+    if not resolved_df.empty:
+        resolved_df = resolved_df.sort_values(by="resolved_at", ascending=False)
+    return open_df, resolved_df, timelines
+
+
 # =========================================================
 # OPENAI
 # =========================================================
@@ -2533,33 +2744,101 @@ def do_generate_v9(save_to_tracker=False):
 def follow_up_assistant_page():
     st.title("Follow-Up Assistant")
 
-    df = get_all_tickets_df()
-    if df.empty:
-        st.info("No tickets found.")
-        return
+    grouped_tab, tickets_tab = st.tabs(["Grouped Activity Follow-Ups", "Ticket Queue"])
 
-    df["attempt_no"] = pd.to_numeric(df["attempt_no"], errors="coerce").fillna(1).astype(int)
-    df["recommended_action"] = df.apply(
-        lambda row: recommended_next_action(row["attempt_no"], str(row["internal_status"])),
-        axis=1,
-    )
+    with grouped_tab:
+        open_groups_df, resolved_groups_df, timelines = _build_followup_activity_groups()
 
-    st.subheader("Open Follow-Up Queue")
-    view_df = df[
-        [
-            "id",
-            "ticket_title",
-            "customer_name",
-            "order_no",
-            "assigned_agent",
-            "attempt_no",
-            "hubspot_stage",
-            "internal_status",
-            "last_activity_date",
-            "recommended_action",
+        m1, m2 = st.columns(2)
+        m1.metric("Open Follow-Up Groups", 0 if open_groups_df.empty else len(open_groups_df))
+        m2.metric("Resolved Groups", 0 if resolved_groups_df.empty else len(resolved_groups_df))
+
+        st.subheader("Open Follow-Up Queue")
+        if open_groups_df.empty:
+            st.info("No grouped follow-up entries are currently open.")
+        else:
+            st.dataframe(
+                open_groups_df[
+                    [
+                        "group_key",
+                        "ticket_title",
+                        "customer_name",
+                        "order_no",
+                        "phone",
+                        "follow_up_date",
+                        "latest_outcome",
+                        "latest_action",
+                        "manual_agents",
+                        "entries",
+                        "lifetime_days",
+                    ]
+                ],
+                use_container_width=True,
+            )
+
+            group_options = {
+                f"{row['group_key']} | {row['customer_name'] or 'N/A'} | {row['order_no'] or 'N/A'} | {row['phone'] or 'N/A'}": row["group_key"]
+                for _, row in open_groups_df.iterrows()
+            }
+            selected_group = st.selectbox(
+                "Select Follow-Up Group for Timeline",
+                list(group_options.keys()),
+                key="follow_up_group_select",
+            )
+            selected_group_key = group_options[selected_group]
+            st.subheader("Follow-Up Timeline")
+            st.dataframe(timelines[selected_group_key], use_container_width=True)
+
+        if not resolved_groups_df.empty:
+            with st.expander("Resolved Follow-Up Groups"):
+                st.dataframe(
+                    resolved_groups_df[
+                        [
+                            "group_key",
+                            "ticket_title",
+                            "customer_name",
+                            "order_no",
+                            "phone",
+                            "resolved_at",
+                            "latest_outcome",
+                            "latest_action",
+                            "manual_agents",
+                            "entries",
+                            "lifetime_days",
+                        ]
+                    ],
+                    use_container_width=True,
+                )
+
+    with tickets_tab:
+        df = get_all_tickets_df()
+        if df.empty:
+            st.info("No tickets found.")
+            return
+
+        df["attempt_no"] = pd.to_numeric(df["attempt_no"], errors="coerce").fillna(1).astype(int)
+        df["recommended_action"] = df.apply(
+            lambda row: recommended_next_action(row["attempt_no"], str(row["internal_status"])),
+            axis=1,
+        )
+
+        st.subheader("Ticket Follow-Up Queue")
+        view_df = df[
+            [
+                "id",
+                "ticket_title",
+                "customer_name",
+                "order_no",
+                "assigned_agent",
+                "attempt_no",
+                "hubspot_stage",
+                "internal_status",
+                "next_followup_date",
+                "last_activity_date",
+                "recommended_action",
+            ]
         ]
-    ]
-    st.dataframe(view_df, use_container_width=True)
+        st.dataframe(view_df, use_container_width=True)
 
 
 def _kpi_pick_period(prefix: str):
