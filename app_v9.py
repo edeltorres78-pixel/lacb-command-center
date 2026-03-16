@@ -256,6 +256,15 @@ IO_OUTCOMES = [
     "Follow up",
     "Scheduled",
 ]
+
+TERMINAL_FOLLOWUP_OUTCOMES = {
+    "closed/resolved",
+    "closed",
+    "resolved",
+    "escalated",
+    "transferred call",
+    "scheduled",
+}
 QUICK_LOG_ACTIONS = [
     "Outbound Call",
     "Inbound Call",
@@ -550,6 +559,7 @@ def ensure_activity_io_schema(conn):
         "phone",
         "email",
         "ticket_update_name",
+        "follow_up_date",
     ]:
         if column_name not in cols:
             cur.execute(f"ALTER TABLE activities ADD COLUMN {column_name} TEXT")
@@ -601,6 +611,7 @@ def init_db():
                 phone TEXT,
                 email TEXT,
                 ticket_update_name TEXT,
+                follow_up_date TEXT,
                 action_type TEXT,
                 result_type TEXT,
                 notes TEXT,
@@ -675,6 +686,7 @@ def init_db():
                 phone TEXT,
                 email TEXT,
                 ticket_update_name TEXT,
+                follow_up_date TEXT,
                 action_type TEXT,
                 result_type TEXT,
                 notes TEXT,
@@ -771,14 +783,16 @@ def init_v9_state():
 
         # Inbound / outbound log
         "io_logging_agent": "Ed Torres",
-        "io_channel": IO_CHANNELS[0],
+        "io_channels": [IO_CHANNELS[0]],
         "io_actions": [],
-        "io_result_type": "",
+        "io_result_types": [],
         "io_customer_name": "",
         "io_order_no": "",
         "io_phone": "",
         "io_email": "",
         "io_ticket_update_name": "",
+        "io_follow_up_date": add_business_days(date.today(), 1).isoformat(),
+        "io_follow_up_date_input": add_business_days(date.today(), 1),
         "io_notes": "",
         "io_reset_requested": False,
     }
@@ -1859,20 +1873,23 @@ def add_activity(ticket_id, logging_agent, assigned_owner, action_type, result_t
 
 def save_inbound_outbound_activity_entry(
     logging_agent: str,
-    io_channel: str,
+    io_channels: list[str],
     action_types: list[str],
-    result_type: str,
+    result_types: list[str],
     customer_name: str,
     order_no: str,
     phone: str,
     email: str,
     ticket_update_name: str,
+    follow_up_date: str,
     notes: str,
 ):
+    channel_value = ", ".join([clean_text(x) for x in io_channels if clean_text(x)])
     action_value = ", ".join([clean_text(x) for x in action_types if clean_text(x)])
-    if not clean_text(io_channel):
+    result_value = ", ".join([clean_text(x) for x in result_types if clean_text(x)])
+    if not clean_text(channel_value):
         return False, "Channel is required."
-    if not any([action_value, clean_text(result_type), clean_text(notes), clean_text(customer_name), clean_text(order_no)]):
+    if not any([action_value, clean_text(result_value), clean_text(notes), clean_text(customer_name), clean_text(order_no)]):
         return False, "Add at least an action, outcome, note, customer, or order number."
 
     conn = get_conn()
@@ -1892,26 +1909,28 @@ def save_inbound_outbound_activity_entry(
             phone,
             email,
             ticket_update_name,
+            follow_up_date,
             action_type,
             result_type,
             notes,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             None,
             ts,
             clean_text(logging_agent),
             clean_text(logging_agent),
-            clean_text(io_channel),
+            clean_text(channel_value),
             clean_text(customer_name),
             clean_text(order_no),
             clean_text(phone),
             clean_text(email),
             clean_text(ticket_update_name),
+            clean_text(follow_up_date),
             action_value,
-            clean_text(result_type),
+            clean_text(result_value),
             clean_text(notes),
             ts,
         ),
@@ -1919,6 +1938,31 @@ def save_inbound_outbound_activity_entry(
     conn.commit()
     conn.close()
     return True, "Inbound / outbound activity saved."
+
+
+def update_follow_up_activity_entry(activity_id: int, result_types: list[str], follow_up_date: str, ticket_id=None):
+    result_value = ", ".join([clean_text(x) for x in result_types if clean_text(x)])
+    if not activity_id:
+        return False, "Activity entry not found."
+
+    conn = get_conn()
+    cur = conn.cursor()
+    ts = now_ts()
+    cur.execute(
+        "UPDATE activities SET result_type = ?, follow_up_date = ? WHERE id = ?",
+        (clean_text(result_value), clean_text(follow_up_date), int(activity_id)),
+    )
+
+    if ticket_id:
+        next_followup = "" if _is_terminal_outcome(result_value) else clean_text(follow_up_date)
+        cur.execute(
+            "UPDATE tickets SET next_followup_date = ?, updated_at = ? WHERE id = ?",
+            (next_followup, ts, int(ticket_id)),
+        )
+
+    conn.commit()
+    conn.close()
+    return True, "Follow-up entry updated."
 
 def get_activities_for_ticket(ticket_id: int) -> pd.DataFrame:
     conn = get_conn()
@@ -2212,16 +2256,25 @@ def _normalize_followup_order(value: str) -> str:
     return re.sub(r"\s+", "", clean_text(value).lower())
 
 
+def _split_multi_value(value: str) -> list[str]:
+    return [clean_text(part) for part in str(value or "").split(",") if clean_text(part)]
+
+
+def _is_terminal_outcome(value: str) -> bool:
+    tokens = [token.lower() for token in _split_multi_value(value)]
+    return any(token in TERMINAL_FOLLOWUP_OUTCOMES for token in tokens)
+
+
 def _is_followup_outcome(value: str) -> bool:
-    return "follow up" in clean_text(value).lower()
+    tokens = [token.lower() for token in _split_multi_value(value)]
+    return any(token and token not in TERMINAL_FOLLOWUP_OUTCOMES for token in tokens)
 
 
 def _is_resolved_activity(action_type: str, result_type: str, internal_status: str = "") -> bool:
     action = clean_text(action_type).lower()
-    result = clean_text(result_type).lower()
     status = clean_text(internal_status).lower()
     return (
-        result in {"closed/resolved", "closed", "resolved"}
+        _is_terminal_outcome(result_type)
         or "ticket closed" in action
         or status == "closed"
     )
@@ -2245,6 +2298,7 @@ def _build_followup_activity_groups():
             a.assigned_owner,
             a.action_type,
             a.result_type,
+            a.follow_up_date,
             a.notes,
             t.next_followup_date,
             t.internal_status
@@ -2337,7 +2391,10 @@ def _build_followup_activity_groups():
             return ""
 
         next_followup_candidates = [clean_text(r.get("next_followup_date", "")) for r in rows if clean_text(r.get("next_followup_date", ""))]
-        if next_followup_candidates:
+        activity_followup_candidates = [clean_text(r.get("follow_up_date", "")) for r in rows if clean_text(r.get("follow_up_date", ""))]
+        if activity_followup_candidates:
+            followup_date = activity_followup_candidates[-1]
+        elif next_followup_candidates:
             followup_date = min(next_followup_candidates)
         elif latest_followup_dt and latest_followup_dt != datetime.min:
             followup_date = add_business_days(latest_followup_dt.date(), 1).isoformat()
@@ -2356,6 +2413,8 @@ def _build_followup_activity_groups():
             "last_activity": clean_text(latest_row.get("activity_date", "")),
             "latest_action": clean_text(latest_row.get("action_type", "")),
             "latest_outcome": clean_text(latest_row.get("result_type", "")),
+            "latest_activity_id": int(latest_row.get("id", 0) or 0),
+            "latest_ticket_id": int(latest_row.get("ticket_id", 0) or 0) if str(latest_row.get("ticket_id", "")).strip() else None,
             "manual_agents": ", ".join(sorted({clean_text(r.get("logging_agent", "")) for r in rows if clean_text(r.get("logging_agent", ""))})),
             "entries": len(rows),
             "status": "Resolved" if is_resolved else "Open Follow-Up",
@@ -2376,6 +2435,7 @@ def _build_followup_activity_groups():
                 "phone",
                 "email",
                 "ticket_title",
+                "follow_up_date",
                 "logging_agent",
                 "assigned_owner",
                 "notes",
@@ -2791,8 +2851,47 @@ def follow_up_assistant_page():
                 key="follow_up_group_select",
             )
             selected_group_key = group_options[selected_group]
+            selected_group_row = open_groups_df[open_groups_df["group_key"] == selected_group_key].iloc[0]
             st.subheader("Follow-Up Timeline")
             st.dataframe(timelines[selected_group_key], use_container_width=True)
+
+            current_outcomes = [
+                token for token in _split_multi_value(selected_group_row["latest_outcome"]) if token in IO_OUTCOMES
+            ]
+            default_followup_date = _parse_app_timestamp(selected_group_row["follow_up_date"])
+            default_followup_date = (
+                default_followup_date.date()
+                if default_followup_date is not None
+                else add_business_days(date.today(), 1)
+            )
+
+            with st.form("follow_up_group_edit_form"):
+                st.markdown("**Edit Latest Group Entry**")
+                edited_outcomes = st.multiselect(
+                    "Outcome",
+                    IO_OUTCOMES,
+                    default=current_outcomes,
+                    key="follow_up_group_edit_outcomes",
+                )
+                edited_follow_up_date = st.date_input(
+                    "Follow-Up Date",
+                    value=default_followup_date,
+                    key="follow_up_group_edit_date",
+                )
+                update_group_btn = st.form_submit_button("Update Group")
+
+            if update_group_btn:
+                ok, msg = update_follow_up_activity_entry(
+                    activity_id=int(selected_group_row["latest_activity_id"]),
+                    result_types=edited_outcomes,
+                    follow_up_date=edited_follow_up_date.isoformat(),
+                    ticket_id=selected_group_row["latest_ticket_id"],
+                )
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.warning(msg)
 
         if not resolved_groups_df.empty:
             with st.expander("Resolved Follow-Up Groups"):
@@ -3094,21 +3193,24 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
 
     if st.session_state.pop("io_reset_requested", False):
         for key, value in {
-            "io_channel": IO_CHANNELS[0],
+            "io_channels": [IO_CHANNELS[0]],
             "io_actions": [],
-            "io_result_type": "",
+            "io_result_types": [],
             "io_customer_name": "",
             "io_order_no": "",
             "io_phone": "",
             "io_email": "",
             "io_ticket_update_name": "",
+            "io_follow_up_date": add_business_days(date.today(), 1).isoformat(),
+            "io_follow_up_date_input": add_business_days(date.today(), 1),
             "io_notes": "",
         }.items():
             st.session_state[key] = value
 
-    result_options = [""] + IO_OUTCOMES
-    current_result = st.session_state.get("io_result_type", "")
-    result_index = result_options.index(current_result) if current_result in result_options else 0
+    if not isinstance(st.session_state.get("io_channels"), list):
+        st.session_state["io_channels"] = [clean_text(st.session_state.get("io_channels", ""))] if clean_text(st.session_state.get("io_channels", "")) else []
+    if not isinstance(st.session_state.get("io_result_types"), list):
+        st.session_state["io_result_types"] = _split_multi_value(st.session_state.get("io_result_types", ""))
 
     with st.form("io_activity_form"):
         c1, c2, c3 = st.columns(3)
@@ -3119,16 +3221,21 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
                 index=KPI_AGENTS.index(st.session_state.get("io_logging_agent", KPI_AGENTS[0])),
                 key="io_logging_agent",
             )
-            io_channel = st.selectbox("Channel", IO_CHANNELS, key="io_channel")
+            io_channels = st.multiselect("Channel", IO_CHANNELS, key="io_channels")
             action_types = st.multiselect("Action Type", IO_TASK_ACTIONS, key="io_actions")
         with c2:
-            result_type = st.selectbox("Outcome", result_options, index=result_index, key="io_result_type")
+            result_types = st.multiselect("Outcome", IO_OUTCOMES, key="io_result_types")
             customer_name = st.text_input("Customer Name", key="io_customer_name")
             order_no = st.text_input("Order #", key="io_order_no")
             phone = st.text_input("Phone", key="io_phone")
         with c3:
             email = st.text_input("Email", key="io_email")
             ticket_update_name = st.text_input("Ticket / Task Update Name", key="io_ticket_update_name")
+            follow_up_date = st.date_input(
+                "Follow-Up Date",
+                value=st.session_state.get("io_follow_up_date_input", add_business_days(date.today(), 1)),
+                key="io_follow_up_date_input",
+            )
             notes = st.text_area("Notes", key="io_notes", height=150)
 
         b1, b2 = st.columns(2)
@@ -3138,14 +3245,15 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
     if save_btn or save_new_btn:
         ok, msg = save_inbound_outbound_activity_entry(
             logging_agent=logging_agent,
-            io_channel=io_channel,
+            io_channels=io_channels,
             action_types=action_types,
-            result_type=result_type,
+            result_types=result_types,
             customer_name=customer_name,
             order_no=order_no,
             phone=phone,
             email=email,
             ticket_update_name=ticket_update_name,
+            follow_up_date=follow_up_date.isoformat(),
             notes=notes,
         )
         if ok:
@@ -3165,6 +3273,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
             activity_date AS timestamp_pacific,
             logging_agent,
             io_channel,
+            follow_up_date,
             action_type,
             result_type,
             customer_name,
@@ -4131,6 +4240,7 @@ def history_export_page():
             a.phone,
             a.email,
             a.activity_date AS timestamp_pacific,
+            a.follow_up_date,
             a.logging_agent,
             a.assigned_owner,
             a.action_type,
