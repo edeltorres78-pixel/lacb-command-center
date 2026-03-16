@@ -518,6 +518,21 @@ def ensure_cc_id_schema_and_backfill(conn):
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_cc_id_unique ON tickets(cc_id)")
 
 
+def ensure_activity_io_schema(conn):
+    cur = conn.cursor()
+    cols = _table_columns(conn, "activities")
+    for column_name in [
+        "io_channel",
+        "customer_name",
+        "order_no",
+        "phone",
+        "email",
+        "ticket_update_name",
+    ]:
+        if column_name not in cols:
+            cur.execute(f"ALTER TABLE activities ADD COLUMN {column_name} TEXT")
+
+
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
@@ -558,6 +573,12 @@ def init_db():
                 activity_date TEXT,
                 logging_agent TEXT,
                 assigned_owner TEXT,
+                io_channel TEXT,
+                customer_name TEXT,
+                order_no TEXT,
+                phone TEXT,
+                email TEXT,
+                ticket_update_name TEXT,
                 action_type TEXT,
                 result_type TEXT,
                 notes TEXT,
@@ -626,6 +647,12 @@ def init_db():
                 activity_date TEXT,
                 logging_agent TEXT,
                 assigned_owner TEXT,
+                io_channel TEXT,
+                customer_name TEXT,
+                order_no TEXT,
+                phone TEXT,
+                email TEXT,
+                ticket_update_name TEXT,
                 action_type TEXT,
                 result_type TEXT,
                 notes TEXT,
@@ -662,6 +689,7 @@ def init_db():
         )
 
     ensure_cc_id_schema_and_backfill(conn)
+    ensure_activity_io_schema(conn)
     conn.commit()
     conn.close()
 
@@ -718,6 +746,19 @@ def init_v9_state():
         "quick_log_logging_agent": "Ed Torres",
         "quick_log_assigned_owner": "Ed Torres",
         "quick_log_reset_requested": False,
+
+        # Inbound / outbound log
+        "io_logging_agent": "Ed Torres",
+        "io_channel": IO_CHANNELS[0],
+        "io_actions": [],
+        "io_result_type": "",
+        "io_customer_name": "",
+        "io_order_no": "",
+        "io_phone": "",
+        "io_email": "",
+        "io_ticket_update_name": "",
+        "io_notes": "",
+        "io_reset_requested": False,
     }
 
     for k, v in defaults.items():
@@ -1723,18 +1764,30 @@ def add_activity(ticket_id, logging_agent, assigned_owner, action_type, result_t
             activity_date,
             logging_agent,
             assigned_owner,
+            io_channel,
+            customer_name,
+            order_no,
+            phone,
+            email,
+            ticket_update_name,
             action_type,
             result_type,
             notes,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ticket_id,
             ts,
             logging_agent,
             assigned_owner,
+            "",
+            clean_text(ticket.get("customer_name", "")),
+            clean_text(ticket.get("order_no", "")),
+            clean_text(ticket.get("phone", "")),
+            "",
+            clean_text(ticket.get("ticket_title", "")),
             action_value,
             result_type,
             notes,
@@ -1771,6 +1824,70 @@ def add_activity(ticket_id, logging_agent, assigned_owner, action_type, result_t
 
     conn.commit()
     conn.close()
+
+
+def save_inbound_outbound_activity_entry(
+    logging_agent: str,
+    io_channel: str,
+    action_types: list[str],
+    result_type: str,
+    customer_name: str,
+    order_no: str,
+    phone: str,
+    email: str,
+    ticket_update_name: str,
+    notes: str,
+):
+    action_value = ", ".join([clean_text(x) for x in action_types if clean_text(x)])
+    if not clean_text(io_channel):
+        return False, "Channel is required."
+    if not any([action_value, clean_text(result_type), clean_text(notes), clean_text(customer_name), clean_text(order_no)]):
+        return False, "Add at least an action, outcome, note, customer, or order number."
+
+    conn = get_conn()
+    cur = conn.cursor()
+    ts = now_ts()
+
+    cur.execute(
+        """
+        INSERT INTO activities (
+            ticket_id,
+            activity_date,
+            logging_agent,
+            assigned_owner,
+            io_channel,
+            customer_name,
+            order_no,
+            phone,
+            email,
+            ticket_update_name,
+            action_type,
+            result_type,
+            notes,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            None,
+            ts,
+            clean_text(logging_agent),
+            clean_text(logging_agent),
+            clean_text(io_channel),
+            clean_text(customer_name),
+            clean_text(order_no),
+            clean_text(phone),
+            clean_text(email),
+            clean_text(ticket_update_name),
+            action_value,
+            clean_text(result_type),
+            clean_text(notes),
+            ts,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return True, "Inbound / outbound activity saved."
 
 def get_activities_for_ticket(ticket_id: int) -> pd.DataFrame:
     conn = get_conn()
@@ -2656,8 +2773,114 @@ def kpi_graph_dashboard_page():
         )
         st.bar_chart(kpi_df.set_index("Metric"))
 
+
+def inbound_outbound_activity_log_page(embedded: bool = False):
+    if embedded:
+        st.subheader("Inbound / Outbound Activity Log")
+    else:
+        st.title("Inbound / Outbound Activity Log")
+    st.caption("Log channel activity entries that should feed the KPI dashboard.")
+
+    if st.session_state.pop("io_reset_requested", False):
+        for key, value in {
+            "io_channel": IO_CHANNELS[0],
+            "io_actions": [],
+            "io_result_type": "",
+            "io_customer_name": "",
+            "io_order_no": "",
+            "io_phone": "",
+            "io_email": "",
+            "io_ticket_update_name": "",
+            "io_notes": "",
+        }.items():
+            st.session_state[key] = value
+
+    result_options = [""] + IO_OUTCOMES
+    current_result = st.session_state.get("io_result_type", "")
+    result_index = result_options.index(current_result) if current_result in result_options else 0
+
+    with st.form("io_activity_form"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            logging_agent = st.selectbox(
+                "Logging Agent",
+                OWNERS,
+                index=OWNERS.index(st.session_state.get("io_logging_agent", OWNERS[0])),
+                key="io_logging_agent",
+            )
+            io_channel = st.selectbox("Channel", IO_CHANNELS, key="io_channel")
+            action_types = st.multiselect("Action Type", IO_TASK_ACTIONS, key="io_actions")
+        with c2:
+            result_type = st.selectbox("Outcome", result_options, index=result_index, key="io_result_type")
+            customer_name = st.text_input("Customer Name", key="io_customer_name")
+            order_no = st.text_input("Order #", key="io_order_no")
+            phone = st.text_input("Phone", key="io_phone")
+        with c3:
+            email = st.text_input("Email", key="io_email")
+            ticket_update_name = st.text_input("Ticket / Task Update Name", key="io_ticket_update_name")
+            notes = st.text_area("Notes", key="io_notes", height=150)
+
+        b1, b2 = st.columns(2)
+        save_btn = b1.form_submit_button("Save Activity")
+        save_new_btn = b2.form_submit_button("Save + Start New")
+
+    if save_btn or save_new_btn:
+        ok, msg = save_inbound_outbound_activity_entry(
+            logging_agent=logging_agent,
+            io_channel=io_channel,
+            action_types=action_types,
+            result_type=result_type,
+            customer_name=customer_name,
+            order_no=order_no,
+            phone=phone,
+            email=email,
+            ticket_update_name=ticket_update_name,
+            notes=notes,
+        )
+        if ok:
+            if save_new_btn:
+                st.session_state["io_reset_requested"] = True
+            st.success(msg)
+            st.rerun()
+        else:
+            st.warning(msg)
+
+    st.subheader("Recent Inbound / Outbound Entries")
+    conn = get_conn()
+    recent_df = _db_read_sql_query(
+        """
+        SELECT
+            id,
+            activity_date,
+            logging_agent,
+            io_channel,
+            action_type,
+            result_type,
+            customer_name,
+            order_no,
+            phone,
+            email,
+            ticket_update_name,
+            notes
+        FROM activities
+        WHERE COALESCE(io_channel, '') <> ''
+        ORDER BY id DESC
+        LIMIT 100
+        """,
+        conn,
+    )
+    conn.close()
+
+    if recent_df.empty:
+        st.info("No inbound / outbound entries logged yet.")
+    else:
+        st.dataframe(recent_df, use_container_width=True)
+
+
 def ticket_tracker_page():
     st.title("Ticket Tracker")
+    inbound_outbound_activity_log_page(embedded=True)
+    st.divider()
 
     if st.session_state.pop("tracker_new_reset_requested", False):
         for k, v in {
@@ -3590,9 +3813,12 @@ def history_export_page():
             a.id,
             a.ticket_id,
             t.cc_id,
-            t.ticket_title,
-            t.customer_name,
-            t.order_no,
+            COALESCE(a.ticket_update_name, t.ticket_title) AS ticket_title,
+            COALESCE(a.customer_name, t.customer_name) AS customer_name,
+            COALESCE(a.order_no, t.order_no) AS order_no,
+            a.io_channel,
+            a.phone,
+            a.email,
             a.activity_date,
             a.logging_agent,
             a.assigned_owner,
@@ -3689,6 +3915,7 @@ PAGES = {
     "Follow-Up Assistant": follow_up_assistant_page,
     "KPI Dashboard": kpi_dashboard_page,
     "KPI Graph Dashboard": kpi_graph_dashboard_page,
+    "Inbound / Outbound Activity Log": inbound_outbound_activity_log_page,
     "Ticket Tracker": ticket_tracker_page,
     "Quick Activity Log": quick_activity_log_page,
     "HubSpot Ticket Builder V9": hubspot_ticket_builder_page_v9,
