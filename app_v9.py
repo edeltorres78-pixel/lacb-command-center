@@ -1206,6 +1206,36 @@ def get_installer_priority_for_region(region_value):
     return sorted(installers, key=lambda x: (priority_rank.get(x["priority"], 99), x["row_order"]))
 
 
+def group_installers_by_priority(installers: list[dict]) -> dict[str, list[dict]]:
+    grouped = {"P1": [], "P2": [], "P3": []}
+    for item in installers:
+        priority = clean_text(item.get("priority", ""))
+        if priority in grouped:
+            grouped[priority].append(item)
+    for priority in grouped:
+        grouped[priority] = sorted(grouped[priority], key=lambda x: x.get("row_order", 9999))
+    return grouped
+
+
+def build_scheduling_priority_copy_block(region_value: str, installers: list[dict], target_date: str) -> str:
+    grouped = group_installers_by_priority(installers)
+    lines = [
+        "DIRECT SCHEDULING PRIORITY",
+        f"Region: {clean_text(region_value)}",
+        f"Suggested target date: {clean_text(target_date)}",
+        "",
+    ]
+    for priority in ["P1", "P2", "P3"]:
+        names = [
+            clean_text(item.get("installer", ""))
+            for item in grouped[priority]
+            if clean_text(item.get("installer", ""))
+        ]
+        if names:
+            lines.append(f"{priority}: {', '.join(names)}")
+    return "\n".join(lines).strip()
+
+
 def lookup_region_by_zip(zip_code):
     df = load_region_map()
     if df.empty or "ZIP_CODE" not in df.columns or "REGION" not in df.columns:
@@ -4193,22 +4223,38 @@ def scheduling_assistant_page():
 
                 route = "Moses Email" if normalize_region_for_dashboard(region) == "PS" else "Direct Scheduling"
                 st.info(f"Default Routing: {route}")
+                suggested_target_date = add_business_days(date.today(), 14).isoformat()
 
                 if route == "Direct Scheduling":
-                    st.caption(f"Suggested target date: {add_business_days(date.today(), 14).isoformat()}")
+                    st.caption(f"Suggested target date: {suggested_target_date}")
 
                 if installers:
-                    out = pd.DataFrame(
-                        [
-                            {
-                                "Priority Order": i + 1,
-                                "Installer": item["installer"],
-                                "Tier": item["priority"],
-                            }
-                            for i, item in enumerate(installers)
-                        ]
-                    )
-                    st.dataframe(out, use_container_width=True, hide_index=True)
+                    grouped_installers = group_installers_by_priority(installers)
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("P1 Installers", len(grouped_installers["P1"]))
+                    m2.metric("P2 Installers", len(grouped_installers["P2"]))
+                    m3.metric("P3 Installers", len(grouped_installers["P3"]))
+
+                    for priority in ["P1", "P2", "P3"]:
+                        items = grouped_installers[priority]
+                        if not items:
+                            continue
+                        st.markdown(f"**{priority} Priority**")
+                        out = pd.DataFrame(
+                            [
+                                {
+                                    "Priority Order": i + 1,
+                                    "Installer": item["installer"],
+                                }
+                                for i, item in enumerate(items)
+                            ]
+                        )
+                        st.dataframe(out, use_container_width=True, hide_index=True)
+
+                    if route == "Direct Scheduling":
+                        copy_block = build_scheduling_priority_copy_block(region, installers, suggested_target_date)
+                        st.markdown("**Copy Block**")
+                        st.code(copy_block, language="text")
                 else:
                     st.warning("No installers found for that region in Regional Dashboard.")
 
