@@ -243,12 +243,11 @@ IO_TASK_ACTIONS = [
     "Internal Email Sent",
     "Called Vendor",
     "Emailed Vendor",
-    "Internal Call w/ Team member",
+    "RC Chat w/ Team Member",
     "Call w/ DC",
     "SMS w/ DC",
     "SMS w/ Customer",
     "Call w/ JC Scheduling",
-    "Call w/ internal team member",
     "Called Installer",
     "SMS Installer",
 ]
