@@ -1156,7 +1156,7 @@ def find_dashboard_region_column(df, region_value):
         nu = _norm_col_name(col)
         if target == "LA" and ("LA(" in u or "LALOSANGELES" in nu):
             return col
-        if target == "OC" and (nu == "OC" or "ORANGECOUNTY" in nu):
+        if target == "OC" and (u.startswith("OC(") or nu == "OC" or nu.startswith("OC") or "ORANGECOUNTY" in nu):
             return col
         if target == "IE" and ("IE/RIVERSIDE" in u or "IERIVERSIDE" in nu):
             return col
