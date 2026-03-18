@@ -2222,6 +2222,7 @@ def update_follow_up_group_entries(group_key: str, result_types: list[str], foll
 
 def update_activity_entry_fields(
     activity_id: int,
+    customer_name: str,
     io_channels: list[str],
     action_types: list[str],
     result_types: list[str],
@@ -2241,10 +2242,11 @@ def update_activity_entry_fields(
     cur.execute(
         """
         UPDATE activities
-        SET io_channel = ?, action_type = ?, result_type = ?, follow_up_date = ?, notes = ?
+        SET customer_name = ?, io_channel = ?, action_type = ?, result_type = ?, follow_up_date = ?, notes = ?
         WHERE id = ?
         """,
         (
+            clean_text(customer_name),
             clean_text(channel_value),
             clean_text(action_value),
             clean_text(result_value),
@@ -4661,6 +4663,10 @@ def history_export_page():
         with st.form("history_edit_activity_form"):
             h1, h2 = st.columns(2)
             with h1:
+                edit_customer_name = st.text_input(
+                    "Customer Name",
+                    value=clean_text(selected_activity_row.get("customer_name", "")),
+                )
                 edit_channels = st.multiselect("Channel", IO_CHANNELS, default=default_channels)
                 edit_actions = st.multiselect("Action Type", IO_TASK_ACTIONS, default=default_actions)
                 edit_outcomes = st.multiselect("Outcome", IO_OUTCOMES, default=default_outcomes)
@@ -4679,6 +4685,7 @@ def history_export_page():
         if save_activity_edit:
             ok, msg = update_activity_entry_fields(
                 activity_id=selected_activity_id,
+                customer_name=edit_customer_name,
                 io_channels=edit_channels,
                 action_types=edit_actions,
                 result_types=edit_outcomes,
