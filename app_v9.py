@@ -568,9 +568,152 @@ def ensure_activity_io_schema(conn):
         "email",
         "ticket_update_name",
         "follow_up_date",
+        "follow_up_case_id",
     ]:
         if column_name not in cols:
             cur.execute(f"ALTER TABLE activities ADD COLUMN {column_name} TEXT")
+
+
+def _parse_follow_up_case_seq(case_id: str) -> int:
+    m = re.match(r"^FUCASE-(\d+)$", clean_text(case_id), flags=re.I)
+    return int(m.group(1)) if m else 0
+
+
+def _next_follow_up_case_id_from_seq(seq: int) -> str:
+    return f"FUCASE-{seq:05d}"
+
+
+def _activity_case_identifiers(customer_name: str = "", order_no: str = "", phone: str = "", ticket_id=None) -> list[str]:
+    identifiers = []
+    ticket_token = _safe_optional_int(ticket_id)
+    if ticket_token is not None:
+        identifiers.append(f"ticket:{ticket_token}")
+    order_token = _normalize_followup_order(order_no)
+    phone_token = _normalize_followup_phone(phone)
+    name_token = _normalize_followup_name(customer_name)
+    if order_token:
+        identifiers.append(f"order:{order_token}")
+    if phone_token:
+        identifiers.append(f"phone:{phone_token}")
+    if name_token:
+        identifiers.append(f"name:{name_token}")
+    return identifiers
+
+
+def get_or_create_follow_up_case_id(conn, customer_name: str = "", order_no: str = "", phone: str = "", ticket_id=None) -> str:
+    cur = conn.cursor()
+    identifiers = _activity_case_identifiers(customer_name, order_no, phone, ticket_id)
+
+    for identifier in identifiers:
+        prefix, value = identifier.split(":", 1)
+        if prefix == "ticket":
+            cur.execute(
+                """
+                SELECT follow_up_case_id
+                FROM activities
+                WHERE follow_up_case_id IS NOT NULL AND ticket_id = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (_safe_optional_int(value),),
+            )
+        elif prefix == "order":
+            cur.execute(
+                """
+                SELECT follow_up_case_id
+                FROM activities
+                WHERE follow_up_case_id IS NOT NULL AND LOWER(REPLACE(COALESCE(order_no, ''), ' ', '')) = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (value,),
+            )
+        elif prefix == "phone":
+            cur.execute(
+                """
+                SELECT follow_up_case_id, phone
+                FROM activities
+                WHERE follow_up_case_id IS NOT NULL AND COALESCE(phone, '') <> ''
+                ORDER BY id ASC
+                """
+            )
+            for case_id, stored_phone in cur.fetchall():
+                if _normalize_followup_phone(stored_phone) == value:
+                    return clean_text(case_id)
+            continue
+        else:
+            cur.execute(
+                """
+                SELECT follow_up_case_id
+                FROM activities
+                WHERE follow_up_case_id IS NOT NULL AND LOWER(TRIM(COALESCE(customer_name, ''))) = ?
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (value,),
+            )
+
+        row = cur.fetchone()
+        if row and clean_text(row[0]):
+            return clean_text(row[0])
+
+    cur.execute("SELECT follow_up_case_id FROM activities WHERE follow_up_case_id IS NOT NULL")
+    max_seq = 0
+    for (case_id,) in cur.fetchall():
+        max_seq = max(max_seq, _parse_follow_up_case_seq(case_id))
+    return _next_follow_up_case_id_from_seq(max_seq + 1)
+
+
+def ensure_follow_up_case_ids(conn):
+    cur = conn.cursor()
+    cols = _table_columns(conn, "activities")
+    if "follow_up_case_id" not in cols:
+        return
+
+    cur.execute(
+        """
+        SELECT id, ticket_id, customer_name, order_no, phone, follow_up_case_id
+        FROM activities
+        ORDER BY id ASC
+        """
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return
+
+    identifier_to_case = {}
+    max_seq = 0
+    updates = []
+
+    for row_id, ticket_id, customer_name, order_no, phone, existing_case_id in rows:
+        case_id = clean_text(existing_case_id)
+        if case_id:
+            max_seq = max(max_seq, _parse_follow_up_case_seq(case_id))
+
+    next_seq = max_seq + 1
+
+    for row_id, ticket_id, customer_name, order_no, phone, existing_case_id in rows:
+        identifiers = _activity_case_identifiers(customer_name, order_no, phone, ticket_id)
+        case_id = clean_text(existing_case_id)
+
+        if not case_id:
+            for identifier in identifiers:
+                if identifier in identifier_to_case:
+                    case_id = identifier_to_case[identifier]
+                    break
+
+        if not case_id:
+            case_id = _next_follow_up_case_id_from_seq(next_seq)
+            next_seq += 1
+
+        for identifier in identifiers:
+            identifier_to_case[identifier] = case_id
+
+        if clean_text(existing_case_id) != case_id:
+            updates.append((case_id, int(row_id)))
+
+    if updates:
+        cur.executemany("UPDATE activities SET follow_up_case_id = ? WHERE id = ?", updates)
 
 
 def init_db():
@@ -620,6 +763,7 @@ def init_db():
                 email TEXT,
                 ticket_update_name TEXT,
                 follow_up_date TEXT,
+                follow_up_case_id TEXT,
                 action_type TEXT,
                 result_type TEXT,
                 notes TEXT,
@@ -695,6 +839,7 @@ def init_db():
                 email TEXT,
                 ticket_update_name TEXT,
                 follow_up_date TEXT,
+                follow_up_case_id TEXT,
                 action_type TEXT,
                 result_type TEXT,
                 notes TEXT,
@@ -732,6 +877,7 @@ def init_db():
 
     ensure_cc_id_schema_and_backfill(conn)
     ensure_activity_io_schema(conn)
+    ensure_follow_up_case_ids(conn)
     conn.commit()
     conn.close()
 
@@ -1830,12 +1976,13 @@ def add_activity(ticket_id, logging_agent, assigned_owner, action_type, result_t
             phone,
             email,
             ticket_update_name,
+            follow_up_case_id,
             action_type,
             result_type,
             notes,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             ticket_id,
@@ -1848,6 +1995,13 @@ def add_activity(ticket_id, logging_agent, assigned_owner, action_type, result_t
             clean_text(ticket.get("phone", "")),
             "",
             clean_text(ticket.get("ticket_title", "")),
+            get_or_create_follow_up_case_id(
+                conn,
+                customer_name=clean_text(ticket.get("customer_name", "")),
+                order_no=clean_text(ticket.get("order_no", "")),
+                phone=clean_text(ticket.get("phone", "")),
+                ticket_id=ticket_id,
+            ),
             action_value,
             result_type,
             notes,
@@ -1925,12 +2079,13 @@ def save_inbound_outbound_activity_entry(
             email,
             ticket_update_name,
             follow_up_date,
+            follow_up_case_id,
             action_type,
             result_type,
             notes,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             None,
@@ -1944,6 +2099,12 @@ def save_inbound_outbound_activity_entry(
             clean_text(email),
             clean_text(ticket_update_name),
             clean_text(follow_up_date),
+            get_or_create_follow_up_case_id(
+                conn,
+                customer_name=clean_text(customer_name),
+                order_no=clean_text(order_no),
+                phone=clean_text(phone),
+            ),
             action_value,
             clean_text(result_value),
             clean_text(notes),
@@ -2365,6 +2526,7 @@ def _build_followup_activity_groups():
         SELECT
             a.id,
             a.ticket_id,
+            a.follow_up_case_id,
             COALESCE(a.ticket_update_name, t.ticket_title) AS ticket_title,
             COALESCE(a.customer_name, t.customer_name) AS customer_name,
             COALESCE(a.order_no, t.order_no) AS order_no,
@@ -2391,51 +2553,24 @@ def _build_followup_activity_groups():
     if df.empty:
         return pd.DataFrame(), pd.DataFrame(), {}
 
-    parent = list(range(len(df)))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a, b):
-        ra = find(a)
-        rb = find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    seen_identifiers = {}
-    for idx, row in df.iterrows():
-        identifiers = []
-        order_no = _normalize_followup_order(row.get("order_no", ""))
-        phone = _normalize_followup_phone(row.get("phone", ""))
-        customer_name = _normalize_followup_name(row.get("customer_name", ""))
-        if order_no:
-            identifiers.append(f"order:{order_no}")
-        if phone:
-            identifiers.append(f"phone:{phone}")
-        if customer_name:
-            identifiers.append(f"name:{customer_name}")
-        if not identifiers:
-            identifiers.append(f"row:{int(row['id'])}")
-
-        for identifier in identifiers:
-            if identifier in seen_identifiers:
-                union(idx, seen_identifiers[identifier])
-            else:
-                seen_identifiers[identifier] = idx
-
     grouped_rows = {}
-    for idx, row in df.iterrows():
-        root = find(idx)
-        grouped_rows.setdefault(root, []).append(row.to_dict())
+    for _, row in df.iterrows():
+        case_id = clean_text(row.get("follow_up_case_id", ""))
+        if not case_id:
+            identifiers = _activity_case_identifiers(
+                customer_name=row.get("customer_name", ""),
+                order_no=row.get("order_no", ""),
+                phone=row.get("phone", ""),
+                ticket_id=row.get("ticket_id", ""),
+            )
+            case_id = identifiers[0] if identifiers else f"row:{_safe_optional_int(row.get('id', 0)) or 0}"
+        grouped_rows.setdefault(case_id, []).append(row.to_dict())
 
     open_groups = []
     resolved_groups = []
     timelines = {}
 
-    for root, rows in grouped_rows.items():
+    for case_id, rows in grouped_rows.items():
         rows = sorted(
             rows,
             key=lambda r: (_parse_app_timestamp(r.get("activity_date", "")) or datetime.min, int(r.get("id", 0))),
@@ -2479,7 +2614,7 @@ def _build_followup_activity_groups():
         else:
             followup_date = ""
 
-        group_key = f"FU-{root + 1}"
+        group_key = clean_text(case_id)
         summary = {
             "group_key": group_key,
             "ticket_title": latest_nonempty("ticket_title"),
