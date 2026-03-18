@@ -218,6 +218,8 @@ IO_CHANNELS = [
     "New HubSpot Ticket Assigned",
     "HubSpot Ticket Update/Follow-Up",
     "Task Review",
+    "Direct Request DC",
+    "Direct Request Leadership",
 ]
 
 IO_TASK_ACTIONS = [
@@ -228,6 +230,7 @@ IO_TASK_ACTIONS = [
     "New Ticket Assigned - Supervisor",
     "New Ticket Assigned - Sales Team",
     "New Ticket Assigned - By Other",
+    "Order Status/ETA Review and update",
     "Service Order Created",
     "Scheduled/Booked Service Appt",
     "Transferred call Sales",
@@ -236,13 +239,17 @@ IO_TASK_ACTIONS = [
     "Transferred call Other",
     "Task Updated",
     "Task Marked Complete",
+    "Submitted Scheduling Request",
+    "Internal Email Sent",
     "Called Vendor",
     "Emailed Vendor",
+    "Internal Call w/ Team member",
     "Call w/ DC",
     "SMS w/ DC",
-    "Call w/ IC Scheduling",
+    "Call w/ JC Scheduling",
     "Call w/ internal team member",
     "Called Installer",
+    "SMS Installer",
 ]
 
 IO_OUTCOMES = [
