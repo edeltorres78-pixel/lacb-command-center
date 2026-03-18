@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -842,8 +843,15 @@ def request_type_to_source(request_type: str) -> str:
     return mapping.get(request_type, "Phone")
 
 
-def clean_text(value: str) -> str:
-    return (value or "").strip()
+def clean_text(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    return str(value).strip()
 
 def add_business_days(start_date: date, days: int) -> date:
     current = start_date
@@ -1964,6 +1972,59 @@ def update_follow_up_activity_entry(activity_id: int, result_types: list[str], f
     conn.close()
     return True, "Follow-up entry updated."
 
+
+def update_activity_entry_fields(
+    activity_id: int,
+    io_channels: list[str],
+    action_types: list[str],
+    result_types: list[str],
+    follow_up_date: str,
+    notes: str,
+    ticket_id=None,
+):
+    if not activity_id:
+        return False, "Select an activity entry first."
+
+    channel_value = ", ".join([clean_text(x) for x in io_channels if clean_text(x)])
+    action_value = ", ".join([clean_text(x) for x in action_types if clean_text(x)])
+    result_value = ", ".join([clean_text(x) for x in result_types if clean_text(x)])
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE activities
+        SET io_channel = ?, action_type = ?, result_type = ?, follow_up_date = ?, notes = ?
+        WHERE id = ?
+        """,
+        (
+            clean_text(channel_value),
+            clean_text(action_value),
+            clean_text(result_value),
+            clean_text(follow_up_date),
+            clean_text(notes),
+            int(activity_id),
+        ),
+    )
+
+    if ticket_id:
+        next_followup = "" if _is_terminal_outcome(result_value) else clean_text(follow_up_date)
+        cur.execute(
+            "UPDATE tickets SET next_followup_date = ?, updated_at = ? WHERE id = ?",
+            (next_followup, now_ts(), int(ticket_id)),
+        )
+
+    conn.commit()
+    conn.close()
+    return True, "Activity entry updated."
+
+
+def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name[:31] or "Sheet1")
+    return output.getvalue()
+
 def get_activities_for_ticket(ticket_id: int) -> pd.DataFrame:
     conn = get_conn()
     df = _db_read_sql_query(
@@ -2243,6 +2304,16 @@ def _parse_app_timestamp(value: str) -> datetime | None:
     return None
 
 
+def _safe_optional_int(value):
+    text = clean_text(value)
+    if not text:
+        return None
+    try:
+        return int(float(text))
+    except Exception:
+        return None
+
+
 def _normalize_followup_name(value: str) -> str:
     return re.sub(r"\s+", " ", clean_text(value).lower()).strip()
 
@@ -2413,8 +2484,8 @@ def _build_followup_activity_groups():
             "last_activity": clean_text(latest_row.get("activity_date", "")),
             "latest_action": clean_text(latest_row.get("action_type", "")),
             "latest_outcome": clean_text(latest_row.get("result_type", "")),
-            "latest_activity_id": int(latest_row.get("id", 0) or 0),
-            "latest_ticket_id": int(latest_row.get("ticket_id", 0) or 0) if str(latest_row.get("ticket_id", "")).strip() else None,
+            "latest_activity_id": _safe_optional_int(latest_row.get("id", 0)) or 0,
+            "latest_ticket_id": _safe_optional_int(latest_row.get("ticket_id", "")),
             "manual_agents": ", ".join(sorted({clean_text(r.get("logging_agent", "")) for r in rows if clean_text(r.get("logging_agent", ""))})),
             "entries": len(rows),
             "status": "Resolved" if is_resolved else "Open Follow-Up",
@@ -4260,6 +4331,17 @@ def history_export_page():
     st.subheader("Activity History")
     owner_filter = st.selectbox("Owner Filter", ["All"] + KPI_AGENTS, key="history_owner_filter")
     history_search = st.text_input("History Search", key="history_search")
+    date_mode = st.selectbox("Date Filter", ["All Dates", "Single Date", "Date Range"], key="history_date_mode")
+
+    filter_date = None
+    start_date = None
+    end_date = None
+    if date_mode == "Single Date":
+        filter_date = st.date_input("Select Date", value=date.today(), key="history_single_date")
+    elif date_mode == "Date Range":
+        d1, d2 = st.columns(2)
+        start_date = d1.date_input("Start Date", value=date.today() - timedelta(days=7), key="history_start_date")
+        end_date = d2.date_input("End Date", value=date.today(), key="history_end_date")
 
     filtered_activities = df_activities.copy()
     if owner_filter != "All" and not filtered_activities.empty:
@@ -4278,7 +4360,73 @@ def history_export_page():
         )
         filtered_activities = filtered_activities[mask]
 
+    if not filtered_activities.empty and "timestamp_pacific" in filtered_activities.columns:
+        activity_dates = filtered_activities["timestamp_pacific"].fillna("").astype(str).str[:10]
+        if date_mode == "Single Date" and filter_date is not None:
+            filtered_activities = filtered_activities[activity_dates == filter_date.isoformat()]
+        elif date_mode == "Date Range" and start_date is not None and end_date is not None:
+            filtered_activities = filtered_activities[
+                activity_dates.between(start_date.isoformat(), end_date.isoformat())
+            ]
+
     st.dataframe(filtered_activities, use_container_width=True)
+
+    if not filtered_activities.empty:
+        edit_options = {
+            f"#{int(row['id'])} | {row.get('timestamp_pacific', '') or '-'} | {row.get('customer_name', '') or 'N/A'} | {row.get('result_type', '') or 'N/A'}": int(row["id"])
+            for _, row in filtered_activities.iterrows()
+        }
+        selected_activity_label = st.selectbox(
+            "Edit / Delete Activity Entry",
+            list(edit_options.keys()),
+            key="history_edit_activity_select",
+        )
+        selected_activity_id = edit_options[selected_activity_label]
+        selected_activity_row = filtered_activities[filtered_activities["id"] == selected_activity_id].iloc[0]
+
+        default_channels = [x for x in _split_multi_value(selected_activity_row.get("io_channel", "")) if x in IO_CHANNELS]
+        default_actions = [x for x in _split_multi_value(selected_activity_row.get("action_type", "")) if x in IO_TASK_ACTIONS]
+        default_outcomes = [x for x in _split_multi_value(selected_activity_row.get("result_type", "")) if x in IO_OUTCOMES]
+        default_follow_up = _parse_app_timestamp(selected_activity_row.get("follow_up_date", ""))
+        default_follow_up = default_follow_up.date() if default_follow_up else add_business_days(date.today(), 1)
+
+        with st.form("history_edit_activity_form"):
+            h1, h2 = st.columns(2)
+            with h1:
+                edit_channels = st.multiselect("Channel", IO_CHANNELS, default=default_channels)
+                edit_actions = st.multiselect("Action Type", IO_TASK_ACTIONS, default=default_actions)
+                edit_outcomes = st.multiselect("Outcome", IO_OUTCOMES, default=default_outcomes)
+            with h2:
+                edit_follow_up_date = st.date_input("Follow-Up Date", value=default_follow_up)
+                edit_notes = st.text_area("Notes", value=clean_text(selected_activity_row.get("notes", "")), height=140)
+
+            b1, b2 = st.columns(2)
+            save_activity_edit = b1.form_submit_button("Save Activity Changes")
+            delete_activity_edit = b2.form_submit_button("Delete Activity Entry")
+
+        if save_activity_edit:
+            ok, msg = update_activity_entry_fields(
+                activity_id=selected_activity_id,
+                io_channels=edit_channels,
+                action_types=edit_actions,
+                result_types=edit_outcomes,
+                follow_up_date=edit_follow_up_date.isoformat(),
+                notes=edit_notes,
+                ticket_id=_safe_optional_int(selected_activity_row.get("ticket_id", "")),
+            )
+            if ok:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.warning(msg)
+
+        if delete_activity_edit:
+            deleted = delete_activity_by_id(selected_activity_id)
+            if deleted:
+                st.success("Activity entry deleted.")
+                st.rerun()
+            else:
+                st.warning("Could not delete activity entry.")
 
     st.subheader("Ticket History")
     filtered_tickets = df_tickets.copy()
@@ -4294,6 +4442,15 @@ def history_export_page():
             | filtered_tickets["notes_summary"].fillna("").str.lower().str.contains(s)
         )
         filtered_tickets = filtered_tickets[mask]
+
+    if not filtered_tickets.empty and "created_at" in filtered_tickets.columns:
+        ticket_dates = filtered_tickets["created_at"].fillna("").astype(str).str[:10]
+        if date_mode == "Single Date" and filter_date is not None:
+            filtered_tickets = filtered_tickets[ticket_dates == filter_date.isoformat()]
+        elif date_mode == "Date Range" and start_date is not None and end_date is not None:
+            filtered_tickets = filtered_tickets[
+                ticket_dates.between(start_date.isoformat(), end_date.isoformat())
+            ]
 
     st.dataframe(filtered_tickets, use_container_width=True)
 
@@ -4312,7 +4469,7 @@ def history_export_page():
         else:
             st.dataframe(timeline, use_container_width=True)
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.download_button(
             "Download Activities CSV",
@@ -4322,10 +4479,24 @@ def history_export_page():
         )
     with c2:
         st.download_button(
+            "Download Activities XLSX",
+            data=dataframe_to_excel_bytes(filtered_activities, "Activities"),
+            file_name="lacb_activity_history.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    with c3:
+        st.download_button(
             "Download Tickets CSV",
             data=filtered_tickets.to_csv(index=False).encode("utf-8"),
             file_name="lacb_ticket_history.csv",
             mime="text/csv",
+        )
+    with c4:
+        st.download_button(
+            "Download Tickets XLSX",
+            data=dataframe_to_excel_bytes(filtered_tickets, "Tickets"),
+            file_name="lacb_ticket_history.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
 # =========================================================
