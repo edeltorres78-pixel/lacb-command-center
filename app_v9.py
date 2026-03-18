@@ -422,9 +422,11 @@ ETA_REFERENCE = {
     ],
     "Roman Shades": [
         {"vendor": "Richard Williams", "turnaround": "6-8 WEEKS", "preschedule": "9-10 WEEKS"},
+        {"vendor": "Drapemax", "turnaround": "4-5 WEEKS", "preschedule": ""},
     ],
     "Drapery": [
         {"vendor": "Richard Williams", "turnaround": "6-8 WEEKS", "preschedule": "9-10 WEEKS"},
+        {"vendor": "Drapemax", "turnaround": "4-5 WEEKS", "preschedule": ""},
     ],
 }
 ASSISTANT_PROMPT_TEMPLATES = {
@@ -4325,6 +4327,12 @@ def eta_checker_page():
     st.write(f"**Product:** {product_type}")
     st.write(f"**Vendor:** {vendor}")
     st.write(f"**Date Sent:** {sent_date.strftime('%Y-%m-%d')}")
+
+    if product_type in {"Roman Shades", "Drapery"}:
+        st.warning(
+            "Reminder: send an internal message to the Drapery and Roman Shades department "
+            "requesting that they contact the customer to provide an updated ETA."
+        )
 
     if pre_min_days > 0 or pre_max_days > 0:
         pre_start = sent_date + timedelta(days=pre_min_days)
