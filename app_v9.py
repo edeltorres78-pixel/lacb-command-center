@@ -244,6 +244,7 @@ IO_TASK_ACTIONS = [
     "Called Vendor",
     "Emailed Vendor",
     "RC Chat w/ Team Member",
+    "Internal Call w/ Team Member",
     "Call w/ DC",
     "SMS w/ DC",
     "SMS w/ Customer",
@@ -3155,6 +3156,14 @@ def follow_up_assistant_page():
                 if default_followup_date is not None
                 else add_business_days(date.today(), 1)
             )
+            if st.session_state.get("follow_up_group_edit_target_key") != selected_group_key:
+                st.session_state["follow_up_group_edit_target_key"] = selected_group_key
+                st.session_state["follow_up_group_edit_has_date"] = bool(current_follow_up_value)
+
+            st.checkbox(
+                "Set Follow-Up Date",
+                key="follow_up_group_edit_has_date",
+            )
 
             with st.form("follow_up_group_edit_form"):
                 st.markdown("**Edit Grouped Follow-Up Status**")
@@ -3164,18 +3173,15 @@ def follow_up_assistant_page():
                     default=current_outcomes,
                     key="follow_up_group_edit_outcomes",
                 )
-                has_group_follow_up_date = st.checkbox(
-                    "Set Follow-Up Date",
-                    value=bool(current_follow_up_value),
-                    key="follow_up_group_edit_has_date",
-                )
                 edited_follow_up_date = None
-                if has_group_follow_up_date:
+                if st.session_state.get("follow_up_group_edit_has_date", False):
                     edited_follow_up_date = st.date_input(
                         "Follow-Up Date",
                         value=default_followup_date,
                         key="follow_up_group_edit_date",
                     )
+                else:
+                    st.caption("Follow-Up Date not set for this group.")
                 update_group_btn = st.form_submit_button("Update Group")
 
             if update_group_btn:
@@ -3509,6 +3515,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
     if not isinstance(st.session_state.get("io_result_types"), list):
         st.session_state["io_result_types"] = _split_multi_value(st.session_state.get("io_result_types", ""))
     st.session_state.setdefault("io_has_follow_up_date", False)
+    st.checkbox("Set Follow-Up Date", key="io_has_follow_up_date")
 
     with st.form("io_activity_form"):
         c1, c2, c3 = st.columns(3)
@@ -3529,18 +3536,15 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
         with c3:
             email = st.text_input("Email", key="io_email")
             ticket_update_name = st.text_input("Ticket / Task Update Name", key="io_ticket_update_name")
-            has_follow_up_date = st.checkbox(
-                "Set Follow-Up Date",
-                value=st.session_state.get("io_has_follow_up_date", False),
-                key="io_has_follow_up_date",
-            )
             follow_up_date = None
-            if has_follow_up_date:
+            if st.session_state.get("io_has_follow_up_date", False):
                 follow_up_date = st.date_input(
                     "Follow-Up Date",
                     value=st.session_state.get("io_follow_up_date_input", add_business_days(date.today(), 1)),
                     key="io_follow_up_date_input",
                 )
+            else:
+                st.caption("Follow-Up Date not set for this entry.")
             notes = st.text_area("Notes", key="io_notes", height=150)
 
         b1, b2 = st.columns(2)
@@ -4640,6 +4644,11 @@ def history_export_page():
         default_follow_up_value = clean_text(selected_activity_row.get("follow_up_date", ""))
         default_follow_up = _parse_app_timestamp(default_follow_up_value)
         default_follow_up = default_follow_up.date() if default_follow_up else add_business_days(date.today(), 1)
+        if st.session_state.get("history_edit_follow_up_target_id") != selected_activity_id:
+            st.session_state["history_edit_follow_up_target_id"] = selected_activity_id
+            st.session_state["history_edit_has_follow_up_date"] = bool(default_follow_up_value)
+
+        st.checkbox("Set Follow-Up Date", key="history_edit_has_follow_up_date")
 
         with st.form("history_edit_activity_form"):
             h1, h2 = st.columns(2)
@@ -4648,10 +4657,11 @@ def history_export_page():
                 edit_actions = st.multiselect("Action Type", IO_TASK_ACTIONS, default=default_actions)
                 edit_outcomes = st.multiselect("Outcome", IO_OUTCOMES, default=default_outcomes)
             with h2:
-                edit_has_follow_up_date = st.checkbox("Set Follow-Up Date", value=bool(default_follow_up_value))
                 edit_follow_up_date = None
-                if edit_has_follow_up_date:
+                if st.session_state.get("history_edit_has_follow_up_date", False):
                     edit_follow_up_date = st.date_input("Follow-Up Date", value=default_follow_up)
+                else:
+                    st.caption("Follow-Up Date not set for this activity.")
                 edit_notes = st.text_area("Notes", value=clean_text(selected_activity_row.get("notes", "")), height=140)
 
             b1, b2 = st.columns(2)
