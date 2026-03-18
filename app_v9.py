@@ -946,7 +946,7 @@ def init_v9_state():
         "io_phone": "",
         "io_email": "",
         "io_ticket_update_name": "",
-        "io_follow_up_date": add_business_days(date.today(), 1).isoformat(),
+        "io_has_follow_up_date": False,
         "io_follow_up_date_input": add_business_days(date.today(), 1),
         "io_notes": "",
         "io_reset_requested": False,
@@ -2142,6 +2142,52 @@ def update_follow_up_activity_entry(activity_id: int, result_types: list[str], f
     return True, "Follow-up entry updated."
 
 
+def update_follow_up_group_entries(group_key: str, result_types: list[str], follow_up_date: str):
+    result_value = ", ".join([clean_text(x) for x in result_types if clean_text(x)])
+    group_key = clean_text(group_key)
+    if not group_key:
+        return False, "Follow-up group not found."
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    if group_key.startswith("row:"):
+        row_id = _safe_optional_int(group_key.split(":", 1)[1])
+        if not row_id:
+            conn.close()
+            return False, "Follow-up group not found."
+        cur.execute("SELECT id, ticket_id FROM activities WHERE id = ?", (int(row_id),))
+    else:
+        cur.execute(
+            "SELECT id, ticket_id FROM activities WHERE follow_up_case_id = ?",
+            (group_key,),
+        )
+
+    rows = cur.fetchall()
+    if not rows:
+        conn.close()
+        return False, "No linked activity entries found for this group."
+
+    activity_ids = sorted({_safe_optional_int(row["id"]) for row in rows if _safe_optional_int(row["id"])})
+    ticket_ids = sorted({_safe_optional_int(row["ticket_id"]) for row in rows if _safe_optional_int(row["ticket_id"])})
+    cleaned_follow_up_date = "" if _is_terminal_outcome(result_value) else clean_text(follow_up_date)
+
+    cur.execute(
+        f"UPDATE activities SET result_type = ?, follow_up_date = ? WHERE id IN ({','.join(['?'] * len(activity_ids))})",
+        [clean_text(result_value), cleaned_follow_up_date, *activity_ids],
+    )
+
+    if ticket_ids:
+        cur.execute(
+            f"UPDATE tickets SET next_followup_date = ?, updated_at = ? WHERE id IN ({','.join(['?'] * len(ticket_ids))})",
+            [cleaned_follow_up_date, now_ts(), *ticket_ids],
+        )
+
+    conn.commit()
+    conn.close()
+    return True, f"Updated {len(activity_ids)} linked activity entr{'y' if len(activity_ids) == 1 else 'ies'}."
+
+
 def update_activity_entry_fields(
     activity_id: int,
     io_channels: list[str],
@@ -2665,7 +2711,8 @@ def _build_followup_activity_groups():
     open_df = pd.DataFrame(open_groups)
     resolved_df = pd.DataFrame(resolved_groups)
     if not open_df.empty:
-        open_df = open_df.sort_values(by=["follow_up_date", "last_activity"], ascending=[True, False])
+        open_df["_follow_up_sort"] = open_df["follow_up_date"].replace("", "9999-12-31")
+        open_df = open_df.sort_values(by=["_follow_up_sort", "last_activity"], ascending=[True, False]).drop(columns=["_follow_up_sort"])
     if not resolved_df.empty:
         resolved_df = resolved_df.sort_values(by="resolved_at", ascending=False)
     return open_df, resolved_df, timelines
@@ -3072,7 +3119,8 @@ def follow_up_assistant_page():
             current_outcomes = [
                 token for token in _split_multi_value(selected_group_row["latest_outcome"]) if token in IO_OUTCOMES
             ]
-            default_followup_date = _parse_app_timestamp(selected_group_row["follow_up_date"])
+            current_follow_up_value = clean_text(selected_group_row["follow_up_date"])
+            default_followup_date = _parse_app_timestamp(current_follow_up_value)
             default_followup_date = (
                 default_followup_date.date()
                 if default_followup_date is not None
@@ -3080,26 +3128,32 @@ def follow_up_assistant_page():
             )
 
             with st.form("follow_up_group_edit_form"):
-                st.markdown("**Edit Latest Group Entry**")
+                st.markdown("**Edit Grouped Follow-Up Status**")
                 edited_outcomes = st.multiselect(
                     "Outcome",
                     IO_OUTCOMES,
                     default=current_outcomes,
                     key="follow_up_group_edit_outcomes",
                 )
-                edited_follow_up_date = st.date_input(
-                    "Follow-Up Date",
-                    value=default_followup_date,
-                    key="follow_up_group_edit_date",
+                has_group_follow_up_date = st.checkbox(
+                    "Set Follow-Up Date",
+                    value=bool(current_follow_up_value),
+                    key="follow_up_group_edit_has_date",
                 )
+                edited_follow_up_date = None
+                if has_group_follow_up_date:
+                    edited_follow_up_date = st.date_input(
+                        "Follow-Up Date",
+                        value=default_followup_date,
+                        key="follow_up_group_edit_date",
+                    )
                 update_group_btn = st.form_submit_button("Update Group")
 
             if update_group_btn:
-                ok, msg = update_follow_up_activity_entry(
-                    activity_id=int(selected_group_row["latest_activity_id"]),
+                ok, msg = update_follow_up_group_entries(
+                    group_key=selected_group_key,
                     result_types=edited_outcomes,
-                    follow_up_date=edited_follow_up_date.isoformat(),
-                    ticket_id=selected_group_row["latest_ticket_id"],
+                    follow_up_date=edited_follow_up_date.isoformat() if edited_follow_up_date else "",
                 )
                 if ok:
                     st.success(msg)
@@ -3415,7 +3469,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
             "io_phone": "",
             "io_email": "",
             "io_ticket_update_name": "",
-            "io_follow_up_date": add_business_days(date.today(), 1).isoformat(),
+            "io_has_follow_up_date": False,
             "io_follow_up_date_input": add_business_days(date.today(), 1),
             "io_notes": "",
         }.items():
@@ -3425,6 +3479,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
         st.session_state["io_channels"] = [clean_text(st.session_state.get("io_channels", ""))] if clean_text(st.session_state.get("io_channels", "")) else []
     if not isinstance(st.session_state.get("io_result_types"), list):
         st.session_state["io_result_types"] = _split_multi_value(st.session_state.get("io_result_types", ""))
+    st.session_state.setdefault("io_has_follow_up_date", False)
 
     with st.form("io_activity_form"):
         c1, c2, c3 = st.columns(3)
@@ -3445,11 +3500,18 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
         with c3:
             email = st.text_input("Email", key="io_email")
             ticket_update_name = st.text_input("Ticket / Task Update Name", key="io_ticket_update_name")
-            follow_up_date = st.date_input(
-                "Follow-Up Date",
-                value=st.session_state.get("io_follow_up_date_input", add_business_days(date.today(), 1)),
-                key="io_follow_up_date_input",
+            has_follow_up_date = st.checkbox(
+                "Set Follow-Up Date",
+                value=st.session_state.get("io_has_follow_up_date", False),
+                key="io_has_follow_up_date",
             )
+            follow_up_date = None
+            if has_follow_up_date:
+                follow_up_date = st.date_input(
+                    "Follow-Up Date",
+                    value=st.session_state.get("io_follow_up_date_input", add_business_days(date.today(), 1)),
+                    key="io_follow_up_date_input",
+                )
             notes = st.text_area("Notes", key="io_notes", height=150)
 
         b1, b2 = st.columns(2)
@@ -3467,7 +3529,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
             phone=phone,
             email=email,
             ticket_update_name=ticket_update_name,
-            follow_up_date=follow_up_date.isoformat(),
+            follow_up_date=follow_up_date.isoformat() if follow_up_date else "",
             notes=notes,
         )
         if ok:
@@ -4530,7 +4592,8 @@ def history_export_page():
         default_channels = [x for x in _split_multi_value(selected_activity_row.get("io_channel", "")) if x in IO_CHANNELS]
         default_actions = [x for x in _split_multi_value(selected_activity_row.get("action_type", "")) if x in IO_TASK_ACTIONS]
         default_outcomes = [x for x in _split_multi_value(selected_activity_row.get("result_type", "")) if x in IO_OUTCOMES]
-        default_follow_up = _parse_app_timestamp(selected_activity_row.get("follow_up_date", ""))
+        default_follow_up_value = clean_text(selected_activity_row.get("follow_up_date", ""))
+        default_follow_up = _parse_app_timestamp(default_follow_up_value)
         default_follow_up = default_follow_up.date() if default_follow_up else add_business_days(date.today(), 1)
 
         with st.form("history_edit_activity_form"):
@@ -4540,7 +4603,10 @@ def history_export_page():
                 edit_actions = st.multiselect("Action Type", IO_TASK_ACTIONS, default=default_actions)
                 edit_outcomes = st.multiselect("Outcome", IO_OUTCOMES, default=default_outcomes)
             with h2:
-                edit_follow_up_date = st.date_input("Follow-Up Date", value=default_follow_up)
+                edit_has_follow_up_date = st.checkbox("Set Follow-Up Date", value=bool(default_follow_up_value))
+                edit_follow_up_date = None
+                if edit_has_follow_up_date:
+                    edit_follow_up_date = st.date_input("Follow-Up Date", value=default_follow_up)
                 edit_notes = st.text_area("Notes", value=clean_text(selected_activity_row.get("notes", "")), height=140)
 
             b1, b2 = st.columns(2)
@@ -4553,7 +4619,7 @@ def history_export_page():
                 io_channels=edit_channels,
                 action_types=edit_actions,
                 result_types=edit_outcomes,
-                follow_up_date=edit_follow_up_date.isoformat(),
+                follow_up_date=edit_follow_up_date.isoformat() if edit_follow_up_date else "",
                 notes=edit_notes,
                 ticket_id=_safe_optional_int(selected_activity_row.get("ticket_id", "")),
             )
