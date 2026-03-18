@@ -2831,12 +2831,12 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         phone_display = phone or "N/A"
         schedule_text = (
             "SCHEDULING REQUEST:\n"
-            f"?? Active Order Number: {order_display}\n"
-            f"?? Customer Name: {customer_name}\n"
-            f"???? Phone: {phone_display}\n"
-            "?? Installer/Region (if applicable): [Add installer/region]\n"
-            "?? Requested Date & Time or Customer Availability: [Add availability]\n"
-            "?? Any Special Notes: " + text + "\n\n"
+            f"🔢 Active Order Number: {order_display}\n"
+            f"👤 Customer Name: {customer_name}\n"
+            f"📞☎️ Phone: {phone_display}\n"
+            "🚚 Installer/Region (if applicable): [Add installer/region]\n"
+            "📅 Requested Date & Time or Customer Availability: [Add availability]\n"
+            "📝 Any Special Notes: " + text + "\n\n"
             "Internal Note:\n"
             f"I created a scheduling request for {customer_name} (Order {order_display}). "
             "Please contact the customer to confirm availability and book the visit. "
@@ -4160,12 +4160,12 @@ def scheduling_assistant_page():
         if st.button("Generate Scheduling Request"):
             output = (
                 "SCHEDULING REQUEST:\n"
-                f"?? Active Order Number: {order_no or 'N/A'}\n"
-                f"?? Customer Name: {customer or 'N/A'}\n"
-                f"???? Phone: {phone or 'N/A'}\n"
-                f"?? Installer/Region (if applicable): {installer_region or 'N/A'}\n"
-                f"?? Requested Date & Time or Customer Availability: {availability or 'N/A'}\n"
-                f"?? Any Special Notes: {special_notes or 'N/A'}"
+                f"🔢 Active Order Number: {order_no or 'N/A'}\n"
+                f"👤 Customer Name: {customer or 'N/A'}\n"
+                f"📞☎️ Phone: {phone or 'N/A'}\n"
+                f"🚚 Installer/Region (if applicable): {installer_region or 'N/A'}\n"
+                f"📅 Requested Date & Time or Customer Availability: {availability or 'N/A'}\n"
+                f"📝 Any Special Notes: {special_notes or 'N/A'}"
             )
             route, reason = compute_scheduling_route(flags)
 
