@@ -246,6 +246,7 @@ IO_TASK_ACTIONS = [
     "Internal Call w/ Team member",
     "Call w/ DC",
     "SMS w/ DC",
+    "SMS w/ Customer",
     "Call w/ JC Scheduling",
     "Call w/ internal team member",
     "Called Installer",
