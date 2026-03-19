@@ -1219,7 +1219,38 @@ def group_installers_by_priority(installers: list[dict]) -> dict[str, list[dict]
     return grouped
 
 
-def build_scheduling_priority_copy_block(region_value: str, installers: list[dict], target_date: str) -> str:
+SCHEDULING_INSTALLER_EXCEPTIONS = [
+    ("Ruben Cortes", "Works M-F unless there is a block for him if he needs the day."),
+    ("German Ruiz", "Works only 3 days during the week. Off Monday and Wednesday."),
+    ("Alan Gutierrez", "Works only 3 days during the week. Off Tuesday and Thursday."),
+    ("Oscar Rosas", "Works only 3 days during the week. Off Thursday and Friday."),
+    ("Horacio Franco", "Vegas installer. Works only Tuesday and Thursday."),
+]
+
+
+def get_matching_installer_exception_notes(installers: list[dict]) -> list[str]:
+    installer_name_map = {
+        _norm_col_name(clean_text(item.get("installer", ""))): clean_text(item.get("installer", ""))
+        for item in installers
+        if clean_text(item.get("installer", ""))
+    }
+
+    matches = []
+    for installer_name, note in SCHEDULING_INSTALLER_EXCEPTIONS:
+        normalized = _norm_col_name(installer_name)
+        if normalized in installer_name_map:
+            matches.append(f"{installer_name}: {note}")
+        elif installer_name == "Horacio Franco" and _norm_col_name("Herain Franco") in installer_name_map:
+            matches.append(f"Horacio Franco: {note}")
+    return matches
+
+
+def build_scheduling_priority_copy_block(
+    region_value: str,
+    installers: list[dict],
+    target_date: str,
+    exception_notes: list[str] | None = None,
+) -> str:
     grouped = group_installers_by_priority(installers)
     lines = [
         "DIRECT SCHEDULING PRIORITY",
@@ -1235,6 +1266,9 @@ def build_scheduling_priority_copy_block(region_value: str, installers: list[dic
         ]
         if names:
             lines.append(f"{priority}: {', '.join(names)}")
+    if exception_notes:
+        lines.extend(["", "Installer Availability Exceptions:"])
+        lines.extend([f"- {note}" for note in exception_notes if clean_text(note)])
     return "\n".join(lines).strip()
 
 
@@ -4213,6 +4247,10 @@ def scheduling_assistant_page():
         load_scheduler_dashboard.clear()
         st.success("Scheduling workbook refreshed.")
 
+    with st.expander("Installer Availability Exceptions"):
+        for installer_name, note in SCHEDULING_INSTALLER_EXCEPTIONS:
+            st.markdown(f"- **{installer_name}:** {note}")
+
     tab1, tab2 = st.tabs(["Scheduling Request Generator", "ZIP -> Installer Priority"])
 
     with tab1:
@@ -4271,6 +4309,7 @@ def scheduling_assistant_page():
 
                 if installers:
                     grouped_installers = group_installers_by_priority(installers)
+                    exception_notes = get_matching_installer_exception_notes(installers)
                     m1, m2, m3 = st.columns(3)
                     m1.metric("P1 Installers", len(grouped_installers["P1"]))
                     m2.metric("P2 Installers", len(grouped_installers["P2"]))
@@ -4292,8 +4331,18 @@ def scheduling_assistant_page():
                         )
                         st.dataframe(out, use_container_width=True, hide_index=True)
 
+                    if exception_notes:
+                        st.markdown("**Installer Availability Exceptions**")
+                        for note in exception_notes:
+                            st.markdown(f"- {note}")
+
                     if route == "Direct Scheduling":
-                        copy_block = build_scheduling_priority_copy_block(region, installers, suggested_target_date)
+                        copy_block = build_scheduling_priority_copy_block(
+                            region,
+                            installers,
+                            suggested_target_date,
+                            exception_notes=exception_notes,
+                        )
                         st.markdown("**Copy Block**")
                         st.code(copy_block, language="text")
                 else:
