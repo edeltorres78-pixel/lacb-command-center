@@ -2274,6 +2274,40 @@ def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> bytes:
         df.to_excel(writer, index=False, sheet_name=sheet_name[:31] or "Sheet1")
     return output.getvalue()
 
+
+def build_activity_xlsx_export_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+
+    export_df = df.copy()
+    if "ticket_update_name" not in export_df.columns and "ticket_title" in export_df.columns:
+        export_df["ticket_update_name"] = export_df["ticket_title"]
+
+    export_df = export_df.rename(
+        columns={
+            "timestamp_pacific": "activity_date",
+            "customer_name": "customer_name",
+            "order_no": "order_no",
+            "ticket_update_name": "ticket_update_name",
+        }
+    )
+
+    ordered_cols = [
+        "activity_date",
+        "io_channel",
+        "action_type",
+        "phone",
+        "customer_name",
+        "order_no",
+        "ticket_update_name",
+        "email",
+        "result_type",
+        "logging_agent",
+        "notes",
+    ]
+    ordered_cols = [col for col in ordered_cols if col in export_df.columns]
+    return export_df[ordered_cols]
+
 def get_activities_for_ticket(ticket_id: int) -> pd.DataFrame:
     conn = get_conn()
     df = _db_read_sql_query(
@@ -4569,6 +4603,7 @@ def history_export_page():
             a.ticket_id,
             t.cc_id,
             COALESCE(a.ticket_update_name, t.ticket_title) AS ticket_title,
+            COALESCE(a.ticket_update_name, t.ticket_title) AS ticket_update_name,
             COALESCE(a.customer_name, t.customer_name) AS customer_name,
             COALESCE(a.order_no, t.order_no) AS order_no,
             a.io_channel,
@@ -4759,7 +4794,7 @@ def history_export_page():
     with c2:
         st.download_button(
             "Download Activities XLSX",
-            data=dataframe_to_excel_bytes(filtered_activities, "Activities"),
+            data=dataframe_to_excel_bytes(build_activity_xlsx_export_df(filtered_activities), "Activities"),
             file_name="lacb_activity_history.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
