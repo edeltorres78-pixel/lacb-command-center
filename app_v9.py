@@ -237,6 +237,7 @@ IO_TASK_ACTIONS = [
     "Transferred call Agent",
     "Transferred call Scheduling",
     "Transferred call Other",
+    "Created Task",
     "Task Updated",
     "Task Marked Complete",
     "Submitted Scheduling Request",
