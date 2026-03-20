@@ -264,6 +264,7 @@ IO_OUTCOMES = [
     "Waiting on Scheduling Team",
     "Waiting on Vendor",
     "Transferred call",
+    "Task Marked Complete",
     "Follow up",
     "Scheduled",
 ]
@@ -274,6 +275,7 @@ TERMINAL_FOLLOWUP_OUTCOMES = {
     "resolved",
     "escalated",
     "transferred call",
+    "task marked complete",
     "scheduled",
 }
 QUICK_LOG_ACTIONS = [
