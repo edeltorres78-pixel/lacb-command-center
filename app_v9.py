@@ -26,6 +26,7 @@ except ImportError:
 
 APP_TITLE = "LACB Customer Care Command Center V9"
 DB_PATH = "lacb_command_center.db"
+DB_CONNECTION_WARNING = ""
 
 def _safe_secret_get(key, default=None):
     try:
@@ -483,12 +484,23 @@ st.set_page_config(
 # =========================================================
 
 def get_conn():
+    global DB_CONNECTION_WARNING
     backend = _current_db_backend()
     if backend == "postgres":
         if psycopg2 is None:
-            raise RuntimeError("Postgres backend selected but psycopg2 is not installed.")
-        raw = psycopg2.connect(**_pg_conn_args())
-        return _DBConn(raw, "postgres")
+            DB_CONNECTION_WARNING = (
+                "Postgres backend was selected, but psycopg2 is not installed. "
+                "The app is using the local SQLite fallback for now."
+            )
+        else:
+            try:
+                raw = psycopg2.connect(**_pg_conn_args())
+                return _DBConn(raw, "postgres")
+            except Exception as exc:
+                DB_CONNECTION_WARNING = (
+                    "Postgres connection failed. The app is using the local SQLite fallback for now. "
+                    f"Error: {type(exc).__name__}"
+                )
 
     raw = sqlite3.connect(DB_PATH, check_same_thread=False)
     return _DBConn(raw, "sqlite")
@@ -4892,6 +4904,8 @@ def main():
     init_v9_state()
 
     st.sidebar.title("LACB Command Center")
+    if DB_CONNECTION_WARNING:
+        st.sidebar.warning(DB_CONNECTION_WARNING)
     page = st.sidebar.radio("Go to", list(PAGES.keys()), index=list(PAGES.keys()).index(st.session_state["selected_page"]))
     st.session_state["selected_page"] = page
 
