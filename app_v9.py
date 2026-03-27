@@ -606,6 +606,50 @@ def _table_columns(conn, table_name: str) -> list[str]:
     return [r[1] for r in cur.fetchall()]
 
 
+def _index_exists(conn, index_name: str) -> bool:
+    cur = conn.cursor()
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        cur.execute(
+            """
+            SELECT 1
+            FROM pg_indexes
+            WHERE schemaname = 'public' AND indexname = ?
+            LIMIT 1
+            """,
+            (index_name,),
+        )
+        return cur.fetchone() is not None
+
+    cur.execute("PRAGMA index_list(tickets)")
+    return any(str(r[1]) == index_name for r in cur.fetchall())
+
+
+def _ensure_tickets_cc_id_index(conn):
+    cur = conn.cursor()
+    index_name = "idx_tickets_cc_id_unique"
+    if _index_exists(conn, index_name):
+        return
+
+    backend = getattr(conn, "backend", "sqlite")
+    if backend == "postgres":
+        try:
+            cur.execute("SAVEPOINT cc_id_index_sp")
+            cur.execute("SET LOCAL lock_timeout = '750ms'")
+            cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON tickets(cc_id)")
+            cur.execute("RELEASE SAVEPOINT cc_id_index_sp")
+        except Exception:
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT cc_id_index_sp")
+                cur.execute("RELEASE SAVEPOINT cc_id_index_sp")
+            except Exception:
+                pass
+            return
+        return
+
+    cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON tickets(cc_id)")
+
+
 def ensure_cc_id_schema_and_backfill(conn):
     cur = conn.cursor()
     cols = _table_columns(conn, "tickets")
@@ -634,7 +678,7 @@ def ensure_cc_id_schema_and_backfill(conn):
         used.add(next_seq)
         next_seq += 1
 
-    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_cc_id_unique ON tickets(cc_id)")
+    _ensure_tickets_cc_id_index(conn)
 
 
 def ensure_activity_io_schema(conn):
