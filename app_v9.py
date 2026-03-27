@@ -272,6 +272,65 @@ IO_OUTCOMES = [
     "Scheduled",
 ]
 
+IO_PASTE_FIELD_ALIASES = {
+    "logging agent": "logging_agent",
+    "agent": "logging_agent",
+    "outcome": "result_types",
+    "channel": "io_channels",
+    "channels": "io_channels",
+    "customer name": "customer_name",
+    "email": "email",
+    "ticket / task update name": "ticket_update_name",
+    "ticket/task update name": "ticket_update_name",
+    "ticket task update name": "ticket_update_name",
+    "action type": "action_types",
+    "actions": "action_types",
+    "order #": "order_no",
+    "order#": "order_no",
+    "order no": "order_no",
+    "phone": "phone",
+    "follow-up date": "follow_up_date",
+    "follow up date": "follow_up_date",
+    "notes": "notes",
+}
+
+IO_CHANNEL_ALIASES = {
+    "email": "Email",
+    "sms": "SMS",
+    "internal chat dc": "Internal Chat DC",
+    "internal chat scheduling": "Internal Chat Scheduling",
+    "internal chat other": "Internal Chat Other",
+    "inbound ringcx": "Inbound RingCX",
+    "outbound ringcx": "Outbound RingCX",
+    "inbound rc": "Inbound RC (MVP)",
+    "outbound rc": "Outbound RC (MVP)",
+}
+
+IO_ACTION_ALIASES = {
+    "ticket updated": "Ticket Updated/Notes",
+    "ticket updated notes": "Ticket Updated/Notes",
+    "ticket updated/notes": "Ticket Updated/Notes",
+    "outbound call": "Call w/ the customer",
+    "call with the customer": "Call w/ the customer",
+    "call w the customer": "Call w/ the customer",
+    "call w/ the customer": "Call w/ the customer",
+    "emailed customer": "Emailed Customer",
+    "email received": "Emailed Customer",
+    "email sent": "Emailed Customer",
+    "internal chat with team member": "Internal Chat w/ Team Member",
+    "internal chat w team member": "Internal Chat w/ Team Member",
+    "internal chat w/ team member": "Internal Chat w/ Team Member",
+    "internal chat with dc": "Internal Chat w/ DC",
+    "internal chat w dc": "Internal Chat w/ DC",
+    "internal chat w/ dc": "Internal Chat w/ DC",
+}
+
+IO_OUTCOME_ALIASES = {
+    "follow-up": "Follow up",
+    "follow up": "Follow up",
+    "waiting on order readiness": "Follow up",
+}
+
 TERMINAL_FOLLOWUP_OUTCOMES = {
     "closed/resolved",
     "closed",
@@ -969,6 +1028,7 @@ def init_v9_state():
         "io_has_follow_up_date": False,
         "io_follow_up_date_input": add_business_days(date.today(), 1),
         "io_notes": "",
+        "io_paste_text": "",
         "io_reset_requested": False,
     }
 
@@ -1026,6 +1086,139 @@ def clean_text(value) -> str:
     except Exception:
         pass
     return str(value).strip()
+
+
+def _normalize_entry_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", clean_text(value).lower()).strip()
+
+
+def _match_option(value: str, options: list[str], alias_map: dict[str, str] | None = None) -> str:
+    normalized_value = _normalize_entry_token(value)
+    if not normalized_value:
+        return ""
+    for option in options:
+        if _normalize_entry_token(option) == normalized_value:
+            return option
+    if alias_map:
+        alias_hit = alias_map.get(normalized_value, "")
+        if alias_hit in options:
+            return alias_hit
+    return ""
+
+
+def _split_pasted_tokens(value: str) -> list[str]:
+    return [clean_text(part) for part in re.split(r"[,\n;]+", clean_text(value)) if clean_text(part)]
+
+
+def _parse_pasted_date(value: str):
+    text = clean_text(value)
+    if not text:
+        return None
+    try:
+        parsed = pd.to_datetime(text).date()
+        return parsed
+    except Exception:
+        return None
+
+
+def parse_inbound_outbound_paste_block(raw_text: str) -> tuple[dict, list[str]]:
+    parsed_raw: dict[str, str] = {}
+    notes_lines: list[str] = []
+    current_field = ""
+
+    for raw_line in str(raw_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            if current_field == "notes" and notes_lines:
+                notes_lines.append("")
+            continue
+        if ":" in line:
+            key, value = line.split(":", 1)
+            normalized_key = _normalize_entry_token(key)
+            mapped_field = IO_PASTE_FIELD_ALIASES.get(normalized_key, "")
+            if mapped_field:
+                current_field = mapped_field
+                if mapped_field == "notes":
+                    notes_lines = [value.strip()] if clean_text(value) else []
+                else:
+                    parsed_raw[mapped_field] = value.strip()
+                continue
+        if current_field == "notes":
+            notes_lines.append(line)
+
+    if notes_lines:
+        parsed_raw["notes"] = "\n".join(notes_lines).strip()
+
+    updates = {
+        "io_logging_agent": st.session_state.get("io_logging_agent", KPI_AGENTS[0]),
+        "io_channels": list(st.session_state.get("io_channels", [])),
+        "io_actions": list(st.session_state.get("io_actions", [])),
+        "io_result_types": list(st.session_state.get("io_result_types", [])),
+        "io_customer_name": clean_text(parsed_raw.get("customer_name", st.session_state.get("io_customer_name", ""))),
+        "io_order_no": clean_text(parsed_raw.get("order_no", st.session_state.get("io_order_no", ""))),
+        "io_phone": clean_text(parsed_raw.get("phone", st.session_state.get("io_phone", ""))),
+        "io_email": clean_text(parsed_raw.get("email", st.session_state.get("io_email", ""))),
+        "io_ticket_update_name": clean_text(parsed_raw.get("ticket_update_name", st.session_state.get("io_ticket_update_name", ""))),
+        "io_notes": clean_text(parsed_raw.get("notes", st.session_state.get("io_notes", ""))),
+        "io_has_follow_up_date": False,
+        "io_follow_up_date_input": st.session_state.get("io_follow_up_date_input", add_business_days(date.today(), 1)),
+    }
+    warnings: list[str] = []
+
+    agent_match = _match_option(parsed_raw.get("logging_agent", ""), KPI_AGENTS)
+    if agent_match:
+        updates["io_logging_agent"] = agent_match
+    elif clean_text(parsed_raw.get("logging_agent", "")):
+        warnings.append(f"Logging Agent not matched: {parsed_raw['logging_agent']}")
+
+    parsed_channels: list[str] = []
+    parsed_actions: list[str] = []
+    parsed_outcomes: list[str] = []
+
+    for token in _split_pasted_tokens(parsed_raw.get("io_channels", "")):
+        match = _match_option(token, IO_CHANNELS, IO_CHANNEL_ALIASES)
+        if match and match not in parsed_channels:
+            parsed_channels.append(match)
+            continue
+        action_match = _match_option(token, IO_TASK_ACTIONS, IO_ACTION_ALIASES)
+        if action_match and action_match not in parsed_actions:
+            parsed_actions.append(action_match)
+        elif clean_text(token):
+            warnings.append(f"Channel item not matched: {token}")
+
+    for token in _split_pasted_tokens(parsed_raw.get("action_types", "")):
+        match = _match_option(token, IO_TASK_ACTIONS, IO_ACTION_ALIASES)
+        if match and match not in parsed_actions:
+            parsed_actions.append(match)
+            continue
+        channel_match = _match_option(token, IO_CHANNELS, IO_CHANNEL_ALIASES)
+        if channel_match and channel_match not in parsed_channels:
+            parsed_channels.append(channel_match)
+        elif clean_text(token):
+            warnings.append(f"Action item not matched: {token}")
+
+    for token in _split_pasted_tokens(parsed_raw.get("result_types", "")):
+        match = _match_option(token, IO_OUTCOMES, IO_OUTCOME_ALIASES)
+        if match and match not in parsed_outcomes:
+            parsed_outcomes.append(match)
+        elif clean_text(token):
+            warnings.append(f"Outcome item not matched: {token}")
+
+    if parsed_channels:
+        updates["io_channels"] = parsed_channels
+    if parsed_actions:
+        updates["io_actions"] = parsed_actions
+    if parsed_outcomes:
+        updates["io_result_types"] = parsed_outcomes
+
+    parsed_follow_up = _parse_pasted_date(parsed_raw.get("follow_up_date", ""))
+    if parsed_follow_up:
+        updates["io_has_follow_up_date"] = True
+        updates["io_follow_up_date_input"] = parsed_follow_up
+    elif clean_text(parsed_raw.get("follow_up_date", "")):
+        warnings.append(f"Follow-Up Date not matched: {parsed_raw['follow_up_date']}")
+
+    return updates, warnings
 
 def add_business_days(start_date: date, days: int) -> date:
     current = start_date
@@ -3604,6 +3797,19 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
         st.session_state["io_channels"] = [clean_text(st.session_state.get("io_channels", ""))] if clean_text(st.session_state.get("io_channels", "")) else []
     if not isinstance(st.session_state.get("io_result_types"), list):
         st.session_state["io_result_types"] = _split_multi_value(st.session_state.get("io_result_types", ""))
+
+    with st.expander("Paste AI / ChatGPT Entry to Autofill", expanded=False):
+        st.caption("Paste a structured entry block and the form below will prefill for review.")
+        pasted_entry = st.text_area("Paste Entry", key="io_paste_text", height=180)
+        if st.button("Apply Pasted Entry", key="io_apply_paste"):
+            updates, warnings = parse_inbound_outbound_paste_block(pasted_entry)
+            for key, value in updates.items():
+                st.session_state[key] = value
+            if warnings:
+                st.warning("Applied with a few items to review: " + " | ".join(warnings))
+            else:
+                st.success("Pasted entry applied to the form.")
+
     st.session_state.setdefault("io_has_follow_up_date", False)
     st.checkbox("Set Follow-Up Date", key="io_has_follow_up_date")
 
