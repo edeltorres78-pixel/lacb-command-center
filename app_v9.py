@@ -1012,7 +1012,7 @@ def init_db():
 
 def init_v9_state():
     defaults = {
-        "selected_page": "HubSpot Ticket Builder V9",
+        "selected_page": "Ticket Tracker",
 
         # Builder inputs
         "builder_customer_name": "",
@@ -4891,13 +4891,7 @@ def lacb_assistant_page():
 
         pkg = st.session_state.get("assistant_last_no_api_package")
         if pkg:
-            if st.button("Send To HubSpot Builder V9", key="assistant_send_to_builder_btn"):
-                ok, msg = send_no_api_package_to_builder(pkg)
-                if ok:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.warning(msg)
+            st.info("HubSpot Ticket Builder V9 was retired. Use this output directly, or log the result in Ticket Tracker / Inbound / Outbound Activity Log.")
 
 
     history = st.session_state.get("assistant_chat_history", [])
@@ -5140,8 +5134,6 @@ PAGES = {
     "KPI Graph Dashboard": kpi_graph_dashboard_page,
     "Inbound / Outbound Activity Log": inbound_outbound_activity_log_page,
     "Ticket Tracker": ticket_tracker_page,
-    "Quick Activity Log": quick_activity_log_page,
-    "HubSpot Ticket Builder V9": hubspot_ticket_builder_page_v9,
     "Service / Repair Builder": service_repair_builder_page,
     "Scheduling Assistant": scheduling_assistant_page,
     "ETA Checker": eta_checker_page,
@@ -5161,6 +5153,9 @@ def main():
     st.sidebar.title("LACB Command Center")
     if DB_CONNECTION_WARNING:
         st.sidebar.warning(DB_CONNECTION_WARNING)
+
+    if st.session_state.get("selected_page") not in PAGES:
+        st.session_state["selected_page"] = "Ticket Tracker"
     page = st.sidebar.radio("Go to", list(PAGES.keys()), index=list(PAGES.keys()).index(st.session_state["selected_page"]))
     st.session_state["selected_page"] = page
 
