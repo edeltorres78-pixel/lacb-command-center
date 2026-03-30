@@ -245,6 +245,7 @@ IO_TASK_ACTIONS = [
     "Internal Email Sent",
     "Called Vendor",
     "Emailed Vendor",
+    "SMS w/ Vendor",
     "Internal Chat w/ Team Member",
     "Internal Call w/ Team Member",
     "Call w/ the customer",
