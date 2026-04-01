@@ -1061,7 +1061,7 @@ def init_v9_state():
         "quick_log_reset_requested": False,
 
         # Inbound / outbound log
-        "io_logging_agent": "Ed Torres",
+        "io_logging_agent": "",
         "io_channels": [IO_CHANNELS[0]],
         "io_actions": [],
         "io_result_types": [],
@@ -1075,11 +1075,16 @@ def init_v9_state():
         "io_notes": "",
         "io_paste_text": "",
         "io_reset_requested": False,
+        "io_logging_agent_default_migrated": False,
     }
 
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+    if not st.session_state.get("io_logging_agent_default_migrated", False):
+        st.session_state["io_logging_agent"] = ""
+        st.session_state["io_logging_agent_default_migrated"] = True
 
 
 # =========================================================
@@ -2376,6 +2381,9 @@ def save_inbound_outbound_activity_entry(
     follow_up_date: str,
     notes: str,
 ):
+    if not clean_text(logging_agent):
+        return False, "A logging agent must be selected."
+
     channel_value = ", ".join([clean_text(x) for x in io_channels if clean_text(x)])
     action_value = ", ".join([clean_text(x) for x in action_types if clean_text(x)])
     result_value = ", ".join([clean_text(x) for x in result_types if clean_text(x)])
@@ -2512,6 +2520,7 @@ def update_follow_up_group_entries(group_key: str, result_types: list[str], foll
 
 def update_activity_entry_fields(
     activity_id: int,
+    logging_agent: str,
     customer_name: str,
     io_channels: list[str],
     action_types: list[str],
@@ -2523,6 +2532,9 @@ def update_activity_entry_fields(
     if not activity_id:
         return False, "Select an activity entry first."
 
+    if not clean_text(logging_agent):
+        return False, "A logging agent must be selected."
+
     channel_value = ", ".join([clean_text(x) for x in io_channels if clean_text(x)])
     action_value = ", ".join([clean_text(x) for x in action_types if clean_text(x)])
     result_value = ", ".join([clean_text(x) for x in result_types if clean_text(x)])
@@ -2532,10 +2544,11 @@ def update_activity_entry_fields(
     cur.execute(
         """
         UPDATE activities
-        SET customer_name = ?, io_channel = ?, action_type = ?, result_type = ?, follow_up_date = ?, notes = ?
+        SET logging_agent = ?, customer_name = ?, io_channel = ?, action_type = ?, result_type = ?, follow_up_date = ?, notes = ?
         WHERE id = ?
         """,
         (
+            clean_text(logging_agent),
             clean_text(customer_name),
             clean_text(channel_value),
             clean_text(action_value),
@@ -3824,6 +3837,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
 
     if st.session_state.pop("io_reset_requested", False):
         for key, value in {
+            "io_logging_agent": "",
             "io_channels": [IO_CHANNELS[0]],
             "io_actions": [],
             "io_result_types": [],
@@ -3861,10 +3875,15 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
     with st.form("io_activity_form"):
         c1, c2, c3 = st.columns(3)
         with c1:
+            io_agent_options = [""] + KPI_AGENTS
             logging_agent = st.selectbox(
                 "Logging Agent",
-                KPI_AGENTS,
-                index=KPI_AGENTS.index(st.session_state.get("io_logging_agent", KPI_AGENTS[0])),
+                io_agent_options,
+                index=(
+                    io_agent_options.index(st.session_state.get("io_logging_agent", ""))
+                    if st.session_state.get("io_logging_agent", "") in io_agent_options
+                    else 0
+                ),
                 key="io_logging_agent",
             )
             io_channels = st.multiselect("Channel", IO_CHANNELS, key="io_channels")
@@ -5008,8 +5027,17 @@ def history_export_page():
         st.checkbox("Set Follow-Up Date", key="history_edit_has_follow_up_date")
 
         with st.form("history_edit_activity_form"):
+            edit_agent_options = [""] + KPI_AGENTS
+            current_logging_agent = clean_text(selected_activity_row.get("logging_agent", ""))
+            current_logging_agent_index = edit_agent_options.index(current_logging_agent) if current_logging_agent in edit_agent_options else 0
             h1, h2 = st.columns(2)
             with h1:
+                edit_logging_agent = st.selectbox(
+                    "Logging Agent",
+                    edit_agent_options,
+                    index=current_logging_agent_index,
+                    key=f"history_edit_logging_agent_{selected_activity_id}",
+                )
                 edit_customer_name = st.text_input(
                     "Customer Name",
                     value=clean_text(selected_activity_row.get("customer_name", "")),
@@ -5032,6 +5060,7 @@ def history_export_page():
         if save_activity_edit:
             ok, msg = update_activity_entry_fields(
                 activity_id=selected_activity_id,
+                logging_agent=edit_logging_agent,
                 customer_name=edit_customer_name,
                 io_channels=edit_channels,
                 action_types=edit_actions,
@@ -5169,64 +5198,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
