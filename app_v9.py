@@ -1488,6 +1488,22 @@ SCHEDULING_INSTALLER_EXCEPTIONS = [
     ("Horacio Franco", "Vegas installer. Works only Tuesday and Thursday."),
 ]
 
+SCHEDULING_INSTALLER_CONTACTS = [
+    {"Installer": "Juan Carlos (JC)", "Phone Number": "310-995-1697"},
+    {"Installer": "David", "Phone Number": "310-904-4962"},
+    {"Installer": "Jose", "Phone Number": "323-695-9236"},
+    {"Installer": "Martin", "Phone Number": "323-270-7912"},
+    {"Installer": "Ricardo", "Phone Number": "323-270-9856"},
+    {"Installer": "Oscar", "Phone Number": "310-633-1294"},
+    {"Installer": "Ruben", "Phone Number": "424-240-2803"},
+    {"Installer": "Ismael", "Phone Number": "626-926-7543"},
+    {"Installer": "German", "Phone Number": "714-209-5564"},
+    {"Installer": "Eddie", "Phone Number": "951-396-0215"},
+    {"Installer": "Alan", "Phone Number": "760-215-4544"},
+    {"Installer": "Daniel", "Phone Number": "951-396-0215"},
+    {"Installer": "Eric (San Diego)", "Phone Number": "619-645-4332"},
+]
+
 
 def get_matching_installer_exception_notes(installers: list[dict]) -> list[str]:
     installer_name_map = {
@@ -4538,6 +4554,9 @@ def scheduling_assistant_page():
     with st.expander("Installer Availability Exceptions"):
         for installer_name, note in SCHEDULING_INSTALLER_EXCEPTIONS:
             st.markdown(f"- **{installer_name}:** {note}")
+
+    with st.expander("Installer Contact Directory"):
+        st.dataframe(pd.DataFrame(SCHEDULING_INSTALLER_CONTACTS), use_container_width=True, hide_index=True)
 
     tab1, tab2 = st.tabs(["Scheduling Request Generator", "ZIP -> Installer Priority"])
 
