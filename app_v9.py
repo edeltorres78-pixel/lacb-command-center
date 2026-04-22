@@ -2989,6 +2989,39 @@ def _render_channel_count_inputs(prefix: str, label: str = "Channel Counts", hel
     return selected_channels
 
 
+KPI_ACTION_ALIASES = {
+    "outbound call": "Call w/ the customer",
+    "sms sent": "SMS w/ Customer",
+    "email sent": "Emailed Customer",
+    "scheduling request sent": "Submitted Scheduling Request",
+    "appointment scheduled": "Scheduled/Booked Service Appt",
+    "hubspot note added": "Ticket Updated/Notes",
+    "quoterite note added": "Ticket Updated/Notes",
+}
+
+KPI_OUTCOME_ALIASES = {
+    "resolved": "Closed/Resolved",
+    "waiting on customer": "Waiting on Customer",
+    "waiting on internal department": "Waiting on Internal Dpt",
+    "waiting on vendor": "Waiting on Vendor",
+}
+
+
+def _normalize_kpi_token(column: str, value: str) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+
+    normalized_key = _normalize_entry_token(text)
+    if column == "io_channel":
+        return _match_option(text, IO_CHANNELS, IO_CHANNEL_ALIASES) or text
+    if column == "action_type":
+        return KPI_ACTION_ALIASES.get(normalized_key) or _match_option(text, IO_TASK_ACTIONS, IO_ACTION_ALIASES) or text
+    if column == "result_type":
+        return KPI_OUTCOME_ALIASES.get(normalized_key) or _match_option(text, IO_OUTCOMES, IO_OUTCOME_ALIASES) or text
+    return text
+
+
 def _is_terminal_outcome(value: str) -> bool:
     tokens = [token.lower() for token in _split_multi_value(value)]
     return any(token in TERMINAL_FOLLOWUP_OUTCOMES for token in tokens)
@@ -3700,16 +3733,18 @@ def _kpi_pick_period(prefix: str):
 def _kpi_token_count(df: pd.DataFrame, column: str, token: str) -> int:
     if df.empty or column not in df.columns:
         return 0
-    target = clean_text(token).lower()
+    target = _normalize_kpi_token(column, token).lower()
     if not target:
         return 0
-    return int(
-        df[column]
-        .fillna("")
-        .astype(str)
-        .apply(lambda value: sum(1 for part in _split_multi_value(value) if clean_text(part).lower() == target))
-        .sum()
-    )
+    total = 0
+    for value in df[column].fillna("").astype(str):
+        normalized_parts = [_normalize_kpi_token(column, part) for part in _split_multi_value(value)]
+        normalized_parts = [clean_text(part) for part in normalized_parts if clean_text(part)]
+        if column == "io_channel":
+            total += sum(1 for part in normalized_parts if part.lower() == target)
+        else:
+            total += int(target in {part.lower() for part in normalized_parts})
+    return int(total)
 
 
 def _kpi_load_data(owner_filter: str, start_date: date, end_date: date):
@@ -3756,9 +3791,9 @@ def kpi_dashboard_page():
 
     total_activities = len(df_activities) if not df_activities.empty else 0
     total_ticket_actions = (
-        _kpi_token_count(df_activities, "action_type", "new ticket")
-        + _kpi_token_count(df_activities, "action_type", "ticket updated")
-        + _kpi_token_count(df_activities, "action_type", "ticket closed")
+        _kpi_token_count(df_activities, "action_type", "New Ticket Created")
+        + _kpi_token_count(df_activities, "action_type", "Ticket Updated/Notes")
+        + _kpi_token_count(df_activities, "action_type", "Ticket Closed")
     )
 
     ref_cols = st.columns([1.4, 1, 1, 1])
