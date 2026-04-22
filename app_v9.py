@@ -1227,7 +1227,7 @@ def parse_inbound_outbound_paste_block(raw_text: str) -> tuple[dict, list[str]]:
 
     for token in _split_pasted_tokens(parsed_raw.get("io_channels", "")):
         match = _match_option(token, IO_CHANNELS, IO_CHANNEL_ALIASES)
-        if match and match not in parsed_channels:
+        if match:
             parsed_channels.append(match)
             continue
         action_match = _match_option(token, IO_TASK_ACTIONS, IO_ACTION_ALIASES)
@@ -1242,7 +1242,7 @@ def parse_inbound_outbound_paste_block(raw_text: str) -> tuple[dict, list[str]]:
             parsed_actions.append(match)
             continue
         channel_match = _match_option(token, IO_CHANNELS, IO_CHANNEL_ALIASES)
-        if channel_match and channel_match not in parsed_channels:
+        if channel_match:
             parsed_channels.append(channel_match)
         elif clean_text(token):
             warnings.append(f"Action item not matched: {token}")
@@ -2933,6 +2933,62 @@ def _split_multi_value(value: str) -> list[str]:
     return [clean_text(part) for part in str(value or "").split(",") if clean_text(part)]
 
 
+def _channel_count_state_key(prefix: str, channel: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", clean_text(channel).lower()).strip("_")
+    return f"{prefix}_{slug}_count"
+
+
+def _channel_count_map(channels: list[str]) -> dict[str, int]:
+    counts = {channel: 0 for channel in IO_CHANNELS}
+    for channel in channels or []:
+        normalized = clean_text(channel)
+        if normalized in counts:
+            counts[normalized] += 1
+    return counts
+
+
+def _set_channel_count_state(prefix: str, channels: list[str], force: bool = False):
+    counts = _channel_count_map(channels or [])
+    for channel, count in counts.items():
+        key = _channel_count_state_key(prefix, channel)
+        if force or key not in st.session_state:
+            st.session_state[key] = int(count)
+
+
+def _get_channel_list_from_state(prefix: str) -> list[str]:
+    selected_channels: list[str] = []
+    for channel in IO_CHANNELS:
+        key = _channel_count_state_key(prefix, channel)
+        try:
+            count = int(st.session_state.get(key, 0) or 0)
+        except Exception:
+            count = 0
+        if count > 0:
+            selected_channels.extend([channel] * count)
+    return selected_channels
+
+
+def _render_channel_count_inputs(prefix: str, label: str = "Channel Counts", help_text: str = "") -> list[str]:
+    st.markdown(f"**{label}**")
+    if help_text:
+        st.caption(help_text)
+    cols = st.columns(2)
+    for idx, channel in enumerate(IO_CHANNELS):
+        with cols[idx % 2]:
+            st.number_input(
+                channel,
+                min_value=0,
+                step=1,
+                key=_channel_count_state_key(prefix, channel),
+            )
+    selected_channels = _get_channel_list_from_state(prefix)
+    summary = ", ".join(
+        [f"{channel} x{count}" for channel, count in _channel_count_map(selected_channels).items() if count > 0]
+    )
+    st.caption(f"Selected: {summary or 'none'}")
+    return selected_channels
+
+
 def _is_terminal_outcome(value: str) -> bool:
     tokens = [token.lower() for token in _split_multi_value(value)]
     return any(token in TERMINAL_FOLLOWUP_OUTCOMES for token in tokens)
@@ -3644,7 +3700,16 @@ def _kpi_pick_period(prefix: str):
 def _kpi_token_count(df: pd.DataFrame, column: str, token: str) -> int:
     if df.empty or column not in df.columns:
         return 0
-    return int(df[column].fillna("").astype(str).str.contains(re.escape(token), case=False).sum())
+    target = clean_text(token).lower()
+    if not target:
+        return 0
+    return int(
+        df[column]
+        .fillna("")
+        .astype(str)
+        .apply(lambda value: sum(1 for part in _split_multi_value(value) if clean_text(part).lower() == target))
+        .sum()
+    )
 
 
 def _kpi_load_data(owner_filter: str, start_date: date, end_date: date):
@@ -3867,11 +3932,13 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
             "io_notes": "",
         }.items():
             st.session_state[key] = value
+        _set_channel_count_state("io_channel", st.session_state.get("io_channels", []), force=True)
 
     if not isinstance(st.session_state.get("io_channels"), list):
         st.session_state["io_channels"] = [clean_text(st.session_state.get("io_channels", ""))] if clean_text(st.session_state.get("io_channels", "")) else []
     if not isinstance(st.session_state.get("io_result_types"), list):
         st.session_state["io_result_types"] = _split_multi_value(st.session_state.get("io_result_types", ""))
+    _set_channel_count_state("io_channel", st.session_state.get("io_channels", []))
 
     with st.expander("Paste AI / ChatGPT Entry to Autofill", expanded=False):
         st.caption("Paste a structured entry block and the form below will prefill for review.")
@@ -3880,6 +3947,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
             updates, warnings = parse_inbound_outbound_paste_block(pasted_entry)
             for key, value in updates.items():
                 st.session_state[key] = value
+            _set_channel_count_state("io_channel", updates.get("io_channels", []), force=True)
             if warnings:
                 st.warning("Applied with a few items to review: " + " | ".join(warnings))
             else:
@@ -3902,7 +3970,10 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
                 ),
                 key="io_logging_agent",
             )
-            io_channels = st.multiselect("Channel", IO_CHANNELS, key="io_channels")
+            io_channels = _render_channel_count_inputs(
+                "io_channel",
+                help_text="Set a channel higher than 1 when the same channel happened multiple times in one entry, like 2 outbound calls or 3 SMS messages.",
+            )
             action_types = st.multiselect("Action Type", IO_TASK_ACTIONS, key="io_actions")
         with c2:
             result_types = st.multiselect("Outcome", IO_OUTCOMES, key="io_result_types")
@@ -3926,6 +3997,7 @@ def inbound_outbound_activity_log_page(embedded: bool = False):
         b1, b2 = st.columns(2)
         save_btn = b1.form_submit_button("Save Activity")
         save_new_btn = b2.form_submit_button("Save + Start New")
+    st.session_state["io_channels"] = list(io_channels)
 
     if save_btn or save_new_btn:
         ok, msg = save_inbound_outbound_activity_entry(
@@ -5042,6 +5114,9 @@ def history_export_page():
         if st.session_state.get("history_edit_follow_up_target_id") != selected_activity_id:
             st.session_state["history_edit_follow_up_target_id"] = selected_activity_id
             st.session_state["history_edit_has_follow_up_date"] = bool(default_follow_up_value)
+        if st.session_state.get("history_edit_channel_target_id") != selected_activity_id:
+            st.session_state["history_edit_channel_target_id"] = selected_activity_id
+            _set_channel_count_state(f"history_edit_channel_{selected_activity_id}", default_channels, force=True)
 
         st.checkbox("Set Follow-Up Date", key="history_edit_has_follow_up_date")
 
@@ -5061,7 +5136,10 @@ def history_export_page():
                     "Customer Name",
                     value=clean_text(selected_activity_row.get("customer_name", "")),
                 )
-                edit_channels = st.multiselect("Channel", IO_CHANNELS, default=default_channels)
+                edit_channels = _render_channel_count_inputs(
+                    f"history_edit_channel_{selected_activity_id}",
+                    help_text="Use counts here too if this entry had repeated outbound calls, SMS, or emails.",
+                )
                 edit_actions = st.multiselect("Action Type", IO_TASK_ACTIONS, default=default_actions)
                 edit_outcomes = st.multiselect("Outcome", IO_OUTCOMES, default=default_outcomes)
             with h2:
