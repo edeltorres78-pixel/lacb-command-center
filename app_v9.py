@@ -518,6 +518,62 @@ ETA_REFERENCE = {
     ],
 }
 ASSISTANT_PROMPT_TEMPLATES = {
+    "HubSpot + Streamlit - Call Transcript": (
+        "HubSpot + Streamlit\n\n"
+        "Use this call transcript to create the HubSpot / QuoteRite Note and Streamlit Entry. "
+        "Write the resolution and notes in first person.\n\n"
+        "Call transcript:\n"
+        "[paste transcript here]"
+    ),
+    "HubSpot + Streamlit - After SMS Reply": (
+        "HubSpot + Streamlit\n\n"
+        "Use the customer's SMS message and my reply/action to create the HubSpot / QuoteRite Note and Streamlit Entry. "
+        "Write the resolution and notes in first person.\n\n"
+        "Customer SMS:\n"
+        "[paste customer SMS here]\n\n"
+        "My reply / action taken:\n"
+        "[paste what I sent or did here]\n\n"
+        "Current status / next step:\n"
+        "[paste current status or next step here]"
+    ),
+    "HubSpot + Streamlit - After Email": (
+        "HubSpot + Streamlit\n\n"
+        "Use the email context and my reply/action to create the HubSpot / QuoteRite Note and Streamlit Entry. "
+        "Write the resolution and notes in first person.\n\n"
+        "Email context:\n"
+        "[paste customer/internal email here]\n\n"
+        "My reply / action taken:\n"
+        "[paste what I sent or did here]\n\n"
+        "Current status / next step:\n"
+        "[paste current status or next step here]"
+    ),
+    "Draft SMS Reply - Customer Message": (
+        "Draft SMS\n\n"
+        "Draft a concise SMS reply to the customer using the customer's message below. "
+        "Keep it professional, clear, and friendly.\n\n"
+        "Customer SMS:\n"
+        "[paste customer SMS here]\n\n"
+        "What I need to tell the customer:\n"
+        "[paste instruction or update here]"
+    ),
+    "Draft Customer Email - With Context": (
+        "Draft Email\n\n"
+        "Draft a customer-facing email using the context below. "
+        "Use the call transcript for reference if included. Keep the tone professional, clear, and helpful.\n\n"
+        "Context / call transcript / notes:\n"
+        "[paste context here]\n\n"
+        "What I need to tell the customer:\n"
+        "[paste instruction or update here]"
+    ),
+    "Draft Internal Email - With Context": (
+        "Draft Email\n\n"
+        "Draft an internal email for LA Custom Blinds using the context below. "
+        "Use the call transcript for reference if included. Include the order/customer context, the issue, what I did, and the requested next step.\n\n"
+        "Context / call transcript / notes:\n"
+        "[paste context here]\n\n"
+        "Internal request / next step needed:\n"
+        "[paste request here]"
+    ),
     "HubSpot Ticket Draft": "Create a HubSpot ticket for customer [Name], order [Order #], phone [Phone], issue [Issue]. Include internal summary + CRM note + next follow-up recommendation.",
     "Customer SMS Update": "Write a customer SMS update for [Name], order [Order #], explaining we are waiting on scheduling confirmation and will follow up within 24-48 business hours.",
     "Customer Email Update": "Write a customer email in LACB style for [Name], order [Order #], confirming we received the concern and are coordinating next steps.",
