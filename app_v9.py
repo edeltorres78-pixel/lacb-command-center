@@ -1071,6 +1071,11 @@ def init_v9_state():
         "assistant_user_prompt": "",
         "assistant_reset_requested": False,
         "assistant_screenshot_uploader_key": 0,
+        "assistant_manual_customer_name": "",
+        "assistant_manual_order_no": "",
+        "assistant_manual_order_date": "",
+        "assistant_manual_phone": "",
+        "assistant_manual_email": "",
 
         # Ticket selection
         "selected_ticket_id": None,
@@ -2023,6 +2028,23 @@ def _next_business_day_mmddyyyy(start_date: date | None = None) -> str:
     return next_day.strftime("%m/%d/%Y")
 
 
+def assistant_manual_context_text(manual_context: dict | None) -> str:
+    manual_context = manual_context or {}
+    labels = [
+        ("Customer Name", "customer_name"),
+        ("Order Number", "order_no"),
+        ("Order Date", "order_date"),
+        ("Phone Number", "phone"),
+        ("Email", "email"),
+    ]
+    lines = [
+        f"{label}: {clean_text(manual_context.get(key, ''))}"
+        for label, key in labels
+        if clean_text(manual_context.get(key, ""))
+    ]
+    return "\n".join(lines)
+
+
 def infer_problem(customer_name, order_no, request_type, issue_type, raw_details=""):
     fallback_parts = []
     if customer_name:
@@ -2134,6 +2156,7 @@ def infer_expectation(raw_details="", outcome="", follow_up_date=""):
 def build_hubspot_quoterite_streamlit_output(
     customer_name="",
     order_no="",
+    order_date="",
     phone="",
     email="",
     request_type="Service",
@@ -2156,6 +2179,8 @@ def build_hubspot_quoterite_streamlit_output(
     resolution = infer_resolution(raw_details, request_type, issue_type, inferred_action)
     expectation = infer_expectation(raw_details, inferred_outcome, follow_up_date)
     notes = f"{resolution} Current status: {inferred_outcome}."
+    if clean_text(order_date):
+        notes = f"{notes} Order date: {clean_text(order_date)}."
 
     note_block = (
         f"Ticket Name: {inferred_ticket_name}\n\n"
@@ -3430,6 +3455,7 @@ def is_hubspot_streamlit_request(user_prompt: str, mode: str = "General") -> boo
     prompt = clean_text(user_prompt).lower()
     triggers = [
         "hubspot + streamlit",
+        "hubspot + srreamlit",
         "hubspot and streamlit",
         "hubspot ticket + streamlit",
         "hubspot update + streamlit",
@@ -3446,25 +3472,37 @@ def is_hubspot_streamlit_request(user_prompt: str, mode: str = "General") -> boo
     return any(trigger in prompt for trigger in triggers)
 
 
-def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", ticket_context: str = "") -> dict:
+def generate_no_api_assistant_package(
+    user_prompt: str,
+    mode: str = "General",
+    ticket_context: str = "",
+    manual_context: dict | None = None,
+) -> dict:
     text = clean_text(user_prompt)
     if not text:
         return {"output_text": "Enter prompt text to generate a draft."}
 
-    merged = f"{ticket_context}\n\n{text}" if ticket_context else text
+    manual_context = manual_context or {}
+    manual_text = assistant_manual_context_text(manual_context)
+    source_text = f"{text}\n\nManual Details:\n{manual_text}" if manual_text else text
+    merged = "\n\n".join([part for part in [ticket_context, source_text] if clean_text(part)])
     pref = extract_prefill(merged, default_source="Phone")
 
-    customer_name = pref.get("customer_name", "") or "Customer"
-    order_no = pref.get("order_no", "") or ""
-    phone = pref.get("phone", "") or ""
+    customer_name = clean_text(manual_context.get("customer_name", "")) or pref.get("customer_name", "") or "Customer"
+    order_no = clean_text(manual_context.get("order_no", "")) or pref.get("order_no", "") or ""
+    phone = clean_text(manual_context.get("phone", "")) or pref.get("phone", "") or ""
+    email = clean_text(manual_context.get("email", ""))
+    order_date = clean_text(manual_context.get("order_date", ""))
     request_type = pref.get("request_type", "Service")
     issue_type = pref.get("issue_type", "Other")
 
     package = {
-        "raw_details": text,
+        "raw_details": source_text,
         "customer_name": customer_name if customer_name != "Customer" else "",
         "order_no": order_no,
+        "order_date": order_date,
         "phone": phone,
+        "email": email,
         "request_type": request_type,
         "issue_type": issue_type,
         "ticket_source": request_type_to_source(request_type),
@@ -3475,7 +3513,6 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         "summary": "",
         "crm_note": "",
         "sms": "",
-        "email": "",
         "note_block": "",
         "streamlit_block": "",
         "output_text": "",
@@ -3487,7 +3524,7 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         return package
 
     if mode == "Draft Email":
-        subject, body = build_customer_email(customer_name, order_no, issue_type, text)
+        subject, body = build_customer_email(customer_name, order_no, issue_type, source_text)
         package["email"] = f"Subject: {subject}\n\n{body}"
         package["output_text"] = package["email"]
         return package
@@ -3502,7 +3539,7 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
             f"📞☎️ Phone: {phone_display}\n"
             "🚚 Installer/Region (if applicable): [Add installer/region]\n"
             "📅 Requested Date & Time or Customer Availability: [Add availability]\n"
-            "📝 Any Special Notes: " + text + "\n\n"
+            "📝 Any Special Notes: " + source_text + "\n\n"
             "Internal Note:\n"
             f"I created a scheduling request for {customer_name} (Order {order_display}). "
             "Please contact the customer to confirm availability and book the visit. "
@@ -3512,7 +3549,7 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         return package
 
     if mode == "Summarize Notes":
-        compact = " ".join(text.split())
+        compact = " ".join(source_text.split())
         if len(compact) > 700:
             compact = compact[:700].rstrip() + "..."
         order_display = order_no or "N/A"
@@ -3525,17 +3562,18 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         return package
 
     if is_hubspot_streamlit_request(text, mode):
-        package["ticket_name"] = infer_ticket_name(request_type, issue_type, customer_name, order_no, text)
+        package["ticket_name"] = infer_ticket_name(request_type, issue_type, customer_name, order_no, source_text)
         note_block, streamlit_block = build_hubspot_quoterite_streamlit_output(
             customer_name=customer_name,
             order_no=order_no,
+            order_date=order_date,
             phone=phone,
-            email="",
+            email=email,
             request_type=request_type,
             issue_type=issue_type,
             ticket_source=request_type_to_source(request_type),
             ticket_name=package["ticket_name"],
-            raw_details=text,
+            raw_details=source_text,
         )
         package["note_block"] = note_block
         package["streamlit_block"] = streamlit_block
@@ -3548,7 +3586,7 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         return package
 
     if mode == "Create CRM Note":
-        package["crm_note"] = build_crm_note(text, request_type, issue_type)
+        package["crm_note"] = build_crm_note(source_text, request_type, issue_type)
         package["output_text"] = package["crm_note"]
         return package
 
@@ -3556,13 +3594,14 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
     note_block, streamlit_block = build_hubspot_quoterite_streamlit_output(
         customer_name=customer_name,
         order_no=order_no,
+        order_date=order_date,
         phone=phone,
-        email="",
+        email=email,
         request_type=request_type,
         issue_type=issue_type,
         ticket_source=request_type_to_source(request_type),
         ticket_name=package["ticket_name"],
-        raw_details=text,
+        raw_details=source_text,
     )
     package["note_block"] = note_block
     package["streamlit_block"] = streamlit_block
@@ -5262,6 +5301,26 @@ def lacb_assistant_page():
         if not assistant_ready:
             st.info("Screenshots uploaded for visual reference only. Paste the relevant text or enable vision support to analyze screenshots automatically.")
 
+    with st.expander("Manual details for HubSpot + Streamlit output", expanded=False):
+        st.caption("Optional. These values override detected text or screenshots and are only kept in this session.")
+        md1, md2, md3 = st.columns(3)
+        with md1:
+            st.text_input("Customer Name", key="assistant_manual_customer_name")
+            st.text_input("Order Number", key="assistant_manual_order_no")
+        with md2:
+            st.text_input("Order Date", key="assistant_manual_order_date")
+            st.text_input("Phone Number", key="assistant_manual_phone")
+        with md3:
+            st.text_input("Email", key="assistant_manual_email")
+
+    manual_context = {
+        "customer_name": st.session_state.get("assistant_manual_customer_name", ""),
+        "order_no": st.session_state.get("assistant_manual_order_no", ""),
+        "order_date": st.session_state.get("assistant_manual_order_date", ""),
+        "phone": st.session_state.get("assistant_manual_phone", ""),
+        "email": st.session_state.get("assistant_manual_email", ""),
+    }
+
     st.markdown("### Prompt Templates")
     template_map = get_all_prompt_templates()
     tpl1, tpl2 = st.columns([3, 1])
@@ -5323,29 +5382,37 @@ def lacb_assistant_page():
                     ticket_context=ticket_context,
                 )
                 if vision_fields:
+                    manual_text = assistant_manual_context_text(manual_context)
+                    customer_name = clean_text(manual_context.get("customer_name", "")) or vision_fields.get("customer_name", "")
+                    order_no = clean_text(manual_context.get("order_no", "")) or vision_fields.get("order_no", "")
+                    order_date = clean_text(manual_context.get("order_date", ""))
+                    phone = clean_text(manual_context.get("phone", "")) or vision_fields.get("phone", "")
+                    email = clean_text(manual_context.get("email", "")) or vision_fields.get("email", "")
                     raw_details = "\n".join(
-                        [
+                        [part for part in [
+                            f"Manual Details:\n{manual_text}" if manual_text else "",
                             f"User Request: {user_prompt}",
                             f"Issue: {vision_fields.get('issue') or 'N/A'}",
                             f"Resolution / Action Taken: {vision_fields.get('resolution') or 'N/A'}",
                             f"Current Status: {vision_fields.get('status') or 'N/A'}",
                             f"Next Steps: {vision_fields.get('next_steps') or 'N/A'}",
-                        ]
+                        ] if clean_text(part)]
                     )
                     request_type = "Service"
                     issue_type = vision_fields.get("issue") or "Other"
                     ticket_name = infer_ticket_name(
                         request_type,
                         issue_type,
-                        vision_fields.get("customer_name", ""),
-                        vision_fields.get("order_no", ""),
+                        customer_name,
+                        order_no,
                         raw_details,
                     )
                     note_block, streamlit_block = build_hubspot_quoterite_streamlit_output(
-                        customer_name=vision_fields.get("customer_name", ""),
-                        order_no=vision_fields.get("order_no", ""),
-                        phone=vision_fields.get("phone", ""),
-                        email=vision_fields.get("email", ""),
+                        customer_name=customer_name,
+                        order_no=order_no,
+                        order_date=order_date,
+                        phone=phone,
+                        email=email,
                         request_type=request_type,
                         issue_type=issue_type,
                         ticket_source="Image Upload",
@@ -5354,9 +5421,11 @@ def lacb_assistant_page():
                     )
                     pkg = {
                         "raw_details": raw_details,
-                        "customer_name": vision_fields.get("customer_name", ""),
-                        "order_no": vision_fields.get("order_no", ""),
-                        "phone": vision_fields.get("phone", ""),
+                        "customer_name": customer_name,
+                        "order_no": order_no,
+                        "order_date": order_date,
+                        "phone": phone,
+                        "email": email,
                         "request_type": request_type,
                         "issue_type": issue_type,
                         "ticket_source": "Image Upload",
@@ -5364,7 +5433,6 @@ def lacb_assistant_page():
                         "summary": note_block,
                         "crm_note": "",
                         "sms": "",
-                        "email": "",
                         "note_block": note_block,
                         "streamlit_block": streamlit_block,
                         "output_text": f"HubSpot / QuoteRite Note\n\n{note_block}\n\n{streamlit_block}",
@@ -5377,6 +5445,7 @@ def lacb_assistant_page():
                         user_prompt=user_prompt,
                         mode=mode,
                         ticket_context=ticket_context,
+                        manual_context=manual_context,
                     )
                     response_text = pkg.get("output_text", "")
                     st.session_state["assistant_last_no_api_package"] = pkg
@@ -5386,6 +5455,7 @@ def lacb_assistant_page():
                     user_prompt=user_prompt,
                     mode=mode,
                     ticket_context=ticket_context,
+                    manual_context=manual_context,
                 )
                 response_text = pkg.get("output_text", "")
                 st.session_state["assistant_last_no_api_package"] = pkg
@@ -5394,6 +5464,7 @@ def lacb_assistant_page():
                     user_prompt=user_prompt,
                     mode=mode,
                     ticket_context=ticket_context,
+                    manual_context=manual_context,
                 )
                 response_text = pkg.get("output_text", "")
                 st.session_state["assistant_last_no_api_package"] = pkg
