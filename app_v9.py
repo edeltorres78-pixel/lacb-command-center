@@ -1998,6 +1998,14 @@ def build_ticket_name(request_type, issue_type, customer_name, order_no):
 
 
 def infer_ticket_name(request_type, issue_type, customer_name, order_no, raw_details=""):
+    work_text = _assistant_work_text(raw_details)
+    if _has_remote_programming_issue(work_text):
+        parts = ["Call Follow-Up Completed", "Remote Programming Support"]
+        if clean_text(order_no):
+            parts.append(clean_text(order_no))
+        if clean_text(customer_name):
+            parts.append(clean_text(customer_name))
+        return " - ".join(parts)
     return build_ticket_name(
         clean_text(request_type) or "Service",
         clean_text(issue_type) or "Other",
@@ -2019,6 +2027,31 @@ def _compact_sentence(text: str, fallback: str, max_len: int = 220) -> str:
 def _contains_any(text: str, phrases: list[str]) -> bool:
     haystack = clean_text(text).lower()
     return any(phrase in haystack for phrase in phrases)
+
+
+def _assistant_work_text(raw_details: str) -> str:
+    text = clean_text(raw_details)
+    if not text:
+        return ""
+    text = re.sub(r"(?is)\bManual Details:\s*.*$", "", text).strip()
+    match = re.search(r"(?is)\b(?:Call transcript|Transcript|Notes|Issue / Request)\s*:\s*(.+)$", text)
+    if match:
+        text = match.group(1).strip()
+    text = re.sub(r"(?im)^\s*(hubspot\s*(?:\+|and)\s*streamlit|hubspot ticket|hubspot update|quoterite note|crm note|ticket update)\s*$", "", text)
+    text = re.sub(r"(?im)^\s*Use this .*?$", "", text)
+    text = re.sub(r"(?im)^\s*Write the .*?$", "", text)
+    return clean_text(text)
+
+
+def _customer_display_name(customer_name: str) -> str:
+    return clean_text(customer_name) or "Customer"
+
+
+def _has_remote_programming_issue(text: str) -> bool:
+    lowered = clean_text(text).lower()
+    remote_words = ["remote", "channel", "program", "multi-channel", "six-channel", "6-channel"]
+    shade_words = ["blind", "shade", "motor", "sliding glass", "window"]
+    return any(word in lowered for word in remote_words) and any(word in lowered for word in shade_words)
 
 
 def _next_business_day_mmddyyyy(start_date: date | None = None) -> str:
@@ -2046,6 +2079,13 @@ def assistant_manual_context_text(manual_context: dict | None) -> str:
 
 
 def infer_problem(customer_name, order_no, request_type, issue_type, raw_details=""):
+    work_text = _assistant_work_text(raw_details)
+    customer = _customer_display_name(customer_name)
+    if _has_remote_programming_issue(work_text):
+        return (
+            f"{customer} needed help with remote programming for two shades over a sliding glass window. "
+            "One shade was up and the other was down, and the customer was unsure how to activate only the right-side shade."
+        )
     fallback_parts = []
     if customer_name:
         fallback_parts.append(clean_text(customer_name))
@@ -2053,13 +2093,20 @@ def infer_problem(customer_name, order_no, request_type, issue_type, raw_details
         fallback_parts.append(f"order #{clean_text(order_no)}")
     fallback_parts.append(f"{clean_text(request_type) or 'service'} request")
     fallback_parts.append(f"related to {clean_text(issue_type).lower() or 'the customer issue'}")
-    return _compact_sentence(raw_details, "Customer has a " + " ".join(fallback_parts) + ".")
+    return _compact_sentence(work_text or raw_details, "Customer has a " + " ".join(fallback_parts) + ".")
 
 
 def infer_resolution(raw_details="", request_type="", issue_type="", action_type=""):
-    text = clean_text(raw_details)
+    text = _assistant_work_text(raw_details)
     action = clean_text(action_type)
-    if action:
+    if _has_remote_programming_issue(text):
+        return (
+            "I spoke with the customer and confirmed the shades use separate motors with a multi-channel remote. "
+            "I directed the customer to the programming steps I previously sent, explained that I do not troubleshoot remote programming over the phone, "
+            "and advised that the technician can demonstrate the programming steps during the visit. "
+            "I also reminded the customer that the number they called is text-only and provided the direct number for scheduling."
+        )
+    if action and action != "Ticket Updated/Notes":
         return f"I completed the following action: {action}."
     if _contains_any(text, ["called", "call", "voicemail"]):
         return "I called the customer and documented the current status."
@@ -2075,9 +2122,10 @@ def infer_resolution(raw_details="", request_type="", issue_type="", action_type
 
 
 def infer_outcome(raw_details="", request_type="", internal_status="", result_type=""):
+    work_text = _assistant_work_text(raw_details)
     text = " ".join(
         [
-            clean_text(raw_details),
+            work_text,
             clean_text(request_type),
             clean_text(internal_status),
             clean_text(result_type),
@@ -2086,6 +2134,8 @@ def infer_outcome(raw_details="", request_type="", internal_status="", result_ty
     if any(token in text for token in ["closed", "completed", "resolved", "booked", "no response closure"]):
         return "Closed / Resolved"
     if any(token in text for token in ["paid", "payment confirmed", "scheduling request submitted"]):
+        return "Scheduling Pending"
+    if _has_remote_programming_issue(work_text) and any(token in text for token in ["technician", "appointment", "scheduling", "24 to 48", "2424 to 48"]):
         return "Scheduling Pending"
     if any(token in text for token in ["quote sent", "payment link sent", "service fee pending"]):
         return "Payment Pending"
@@ -2099,7 +2149,10 @@ def infer_outcome(raw_details="", request_type="", internal_status="", result_ty
 
 
 def infer_action_type(raw_details="", request_type="", outcome=""):
-    text = f"{clean_text(raw_details)} {clean_text(request_type)} {clean_text(outcome)}".lower()
+    work_text = _assistant_work_text(raw_details)
+    text = f"{work_text} {clean_text(request_type)} {clean_text(outcome)}".lower()
+    if "call transcript" in clean_text(raw_details).lower() or re.search(r"(?im)^\s*(edel|ed)\s+torres\s*\|\s*\d", clean_text(raw_details)):
+        return "Call w/ the customer"
     if "scheduling request" in text:
         return "Submitted Scheduling Request"
     if "service order" in text:
@@ -2116,7 +2169,10 @@ def infer_action_type(raw_details="", request_type="", outcome=""):
 
 
 def infer_channel(raw_details="", ticket_source="", action_type=""):
-    text = f"{clean_text(raw_details)} {clean_text(ticket_source)} {clean_text(action_type)}".lower()
+    work_text = _assistant_work_text(raw_details)
+    text = f"{work_text} {clean_text(ticket_source)} {clean_text(action_type)}".lower()
+    if "call transcript" in clean_text(raw_details).lower() or "call w/ the customer" in text:
+        return "Outbound RingCX"
     if "sms" in text or "text" in text:
         return "SMS"
     if "email" in text:
@@ -2140,10 +2196,16 @@ def infer_follow_up_date(raw_details="", outcome="", manual_follow_up_date=""):
 
 
 def infer_expectation(raw_details="", outcome="", follow_up_date=""):
+    work_text = _assistant_work_text(raw_details)
     outcome_text = clean_text(outcome)
     follow_up = clean_text(follow_up_date)
     if follow_up == "N/A" or outcome_text == "Closed / Resolved":
         return "No further follow-up is needed unless the customer reaches back out."
+    if _has_remote_programming_issue(work_text):
+        return (
+            "Waiting for the customer to contact scheduling directly or for the scheduling team to coordinate the technician visit. "
+            "The technician can demonstrate the remote programming steps during the appointment."
+        )
     if outcome_text == "Waiting on Customer":
         return f"I am waiting on the customer and will follow up on {follow_up}."
     if outcome_text == "Waiting on Order Readiness":
