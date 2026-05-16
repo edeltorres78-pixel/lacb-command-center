@@ -1,4 +1,4 @@
-﻿# Python cache
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,8 +8,9 @@ __pycache__/
 venv/
 env/
 
-# Streamlit local state
+# Streamlit local state / secrets
 .streamlit/
+.streamlit/secrets.toml
 
 # Local databases
 *.db
@@ -28,3 +29,9 @@ Thumbs.db
 # Secrets files
 .env
 .env.*
+
+# Temporary files
+*.tmp
+*.temp
+~$*
+*.bak

@@ -421,6 +421,14 @@ TICKET_IMPORT_ALIASES = {
 
 REGION_MAP_CANDIDATES = ["Region_Map.csv", "region_map.csv"]
 SCHEDULER_CANDIDATES = ["Scheduling Tool_2_20.xlsx", "Scheduling Tool.xlsx"]
+SCHEDULING_AREA_MAP_EDIT_URL = (
+    "https://www.google.com/maps/d/edit?mid=1ZXMl1QrbfCFIy6J6oBBcKCSVYircduw"
+    "&ll=34.12683032112115%2C-117.70885189527004&z=9"
+)
+SCHEDULING_AREA_MAP_VIEW_URL = (
+    "https://www.google.com/maps/d/viewer?mid=1ZXMl1QrbfCFIy6J6oBBcKCSVYircduw"
+    "&ll=34.12683032112115%2C-117.70885189527004&z=9"
+)
 
 SCHEDULING_FLAGS = [
     "Palm Springs",
@@ -444,6 +452,18 @@ REGION_ALIASES = {
     "LAS VEGAS": ["LAS VEGAS", "VEGAS", "LV"],
     "VALLEY": ["VALLEY"],
     "VENTURA": ["VENTURA"],
+}
+
+REGION_DISPLAY_NAMES = {
+    "LA": "Los Angeles (LA)",
+    "OC": "Orange County (OC)",
+    "IE": "Inland Empire / Riverside (IE)",
+    "SD": "San Diego (SD)",
+    "PS": "Palm Springs (PS)",
+    "ARIZONA": "Arizona",
+    "LAS VEGAS": "Las Vegas",
+    "VALLEY": "Valley",
+    "VENTURA": "Ventura",
 }
 ETA_REFERENCE = {
     "Roller Shades": [
@@ -1036,6 +1056,8 @@ def init_v9_state():
         "builder_generated_crm_note": "",
         "builder_generated_sms": "",
         "builder_generated_email": "",
+        "builder_generated_note_block": "",
+        "builder_generated_streamlit_block": "",
         "builder_multi_ticket_drafts": [],
 
         # Assistant
@@ -1488,22 +1510,6 @@ SCHEDULING_INSTALLER_EXCEPTIONS = [
     ("Horacio Franco", "Vegas installer. Works only Tuesday and Thursday."),
 ]
 
-SCHEDULING_INSTALLER_CONTACTS = [
-    {"Installer": "Juan Carlos (JC)", "Phone Number": "310-995-1697"},
-    {"Installer": "David", "Phone Number": "310-904-4962"},
-    {"Installer": "Jose", "Phone Number": "323-695-9236"},
-    {"Installer": "Martin", "Phone Number": "323-270-7912"},
-    {"Installer": "Ricardo", "Phone Number": "323-270-9856"},
-    {"Installer": "Oscar", "Phone Number": "310-633-1294"},
-    {"Installer": "Ruben", "Phone Number": "424-240-2803"},
-    {"Installer": "Ismael", "Phone Number": "626-926-7543"},
-    {"Installer": "German", "Phone Number": "714-209-5564"},
-    {"Installer": "Eddie", "Phone Number": "951-396-0215"},
-    {"Installer": "Alan", "Phone Number": "760-215-4544"},
-    {"Installer": "Daniel", "Phone Number": "951-396-0215"},
-    {"Installer": "Eric (San Diego)", "Phone Number": "619-645-4332"},
-]
-
 
 def get_matching_installer_exception_notes(installers: list[dict]) -> list[str]:
     installer_name_map = {
@@ -1560,6 +1566,13 @@ def lookup_region_by_zip(zip_code):
         return ""
 
     return str(match.iloc[0]["REGION"]).strip()
+
+
+def build_google_maps_zip_search_url(zip_code: str) -> str:
+    clean_zip = re.sub(r"\D", "", str(zip_code or "").strip())[:5]
+    if not clean_zip:
+        return "https://www.google.com/maps"
+    return f"https://www.google.com/maps/search/{clean_zip}"
 
 
 
@@ -1975,6 +1988,195 @@ def build_ticket_name(request_type, issue_type, customer_name, order_no):
     if customer_name:
         parts.append(customer_name)
     return " | ".join(parts)
+
+
+def infer_ticket_name(request_type, issue_type, customer_name, order_no, raw_details=""):
+    return build_ticket_name(
+        clean_text(request_type) or "Service",
+        clean_text(issue_type) or "Other",
+        clean_text(customer_name),
+        clean_text(order_no),
+    )
+
+
+def _compact_sentence(text: str, fallback: str, max_len: int = 220) -> str:
+    cleaned = " ".join(clean_text(text).split())
+    if not cleaned:
+        return fallback
+    sentence = re.split(r"(?<=[.!?])\s+", cleaned)[0].strip()
+    if len(sentence) > max_len:
+        sentence = sentence[:max_len].rstrip() + "..."
+    return sentence or fallback
+
+
+def _contains_any(text: str, phrases: list[str]) -> bool:
+    haystack = clean_text(text).lower()
+    return any(phrase in haystack for phrase in phrases)
+
+
+def _next_business_day_mmddyyyy(start_date: date | None = None) -> str:
+    next_day = (start_date or date.today()) + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+    return next_day.strftime("%m/%d/%Y")
+
+
+def infer_problem(customer_name, order_no, request_type, issue_type, raw_details=""):
+    fallback_parts = []
+    if customer_name:
+        fallback_parts.append(clean_text(customer_name))
+    if order_no:
+        fallback_parts.append(f"order #{clean_text(order_no)}")
+    fallback_parts.append(f"{clean_text(request_type) or 'service'} request")
+    fallback_parts.append(f"related to {clean_text(issue_type).lower() or 'the customer issue'}")
+    return _compact_sentence(raw_details, "Customer has a " + " ".join(fallback_parts) + ".")
+
+
+def infer_resolution(raw_details="", request_type="", issue_type="", action_type=""):
+    text = clean_text(raw_details)
+    action = clean_text(action_type)
+    if action:
+        return f"I completed the following action: {action}."
+    if _contains_any(text, ["called", "call", "voicemail"]):
+        return "I called the customer and documented the current status."
+    if _contains_any(text, ["sms", "texted", "text message"]):
+        return "I sent an SMS update and documented the current status."
+    if _contains_any(text, ["email", "emailed"]):
+        return "I sent an email update and documented the current status."
+    if _contains_any(text, ["scheduling request submitted", "submitted scheduling request", "booked", "scheduled"]):
+        return "I submitted the scheduling request and documented the current status."
+    if _contains_any(text, ["reviewed", "internal notes", "notes"]):
+        return "I reviewed the internal notes and documented the current status."
+    return f"I reviewed the {clean_text(request_type).lower() or 'customer'} request and documented the current status."
+
+
+def infer_outcome(raw_details="", request_type="", internal_status="", result_type=""):
+    text = " ".join(
+        [
+            clean_text(raw_details),
+            clean_text(request_type),
+            clean_text(internal_status),
+            clean_text(result_type),
+        ]
+    ).lower()
+    if any(token in text for token in ["closed", "completed", "resolved", "booked", "no response closure"]):
+        return "Closed / Resolved"
+    if any(token in text for token in ["paid", "payment confirmed", "scheduling request submitted"]):
+        return "Scheduling Pending"
+    if any(token in text for token in ["quote sent", "payment link sent", "service fee pending"]):
+        return "Payment Pending"
+    if any(token in text for token in ["waiting on customer", "need photos", "need reply", "customer decision pending"]):
+        return "Waiting on Customer"
+    if any(token in text for token in ["waiting on vendor", "repair team", "management", "supervisor", "internal update"]):
+        return "Awaiting Internal Response"
+    if any(token in text for token in ["pending eta", "order not ready", "vendor production", "not checked in"]):
+        return "Waiting on Order Readiness"
+    return "Awaiting Internal Response"
+
+
+def infer_action_type(raw_details="", request_type="", outcome=""):
+    text = f"{clean_text(raw_details)} {clean_text(request_type)} {clean_text(outcome)}".lower()
+    if "scheduling request" in text:
+        return "Submitted Scheduling Request"
+    if "service order" in text:
+        return "Service Order Created"
+    if any(token in text for token in ["closed", "resolved", "completed"]):
+        return "Ticket Closed"
+    if any(token in text for token in ["sms", "texted", "text message"]):
+        return "SMS w/ Customer"
+    if "email" in text or "emailed" in text:
+        return "Emailed Customer"
+    if "call" in text or "voicemail" in text:
+        return "Call w/ the customer"
+    return "Ticket Updated/Notes"
+
+
+def infer_channel(raw_details="", ticket_source="", action_type=""):
+    text = f"{clean_text(raw_details)} {clean_text(ticket_source)} {clean_text(action_type)}".lower()
+    if "sms" in text or "text" in text:
+        return "SMS"
+    if "email" in text:
+        return "Email"
+    if "ringcx" in text or "customer call" in text or "call w/ the customer" in text:
+        return "Outbound RingCX"
+    if "ringcentral" in text or "rc " in text:
+        return "Outbound RC (MVP)"
+    if "chat" in text:
+        return "Internal Chat Other"
+    return "HubSpot Ticket Update/Follow-Up"
+
+
+def infer_follow_up_date(raw_details="", outcome="", manual_follow_up_date=""):
+    if clean_text(manual_follow_up_date):
+        return clean_text(manual_follow_up_date)
+    text = f"{clean_text(raw_details)} {clean_text(outcome)}".lower()
+    if any(token in text for token in ["closed", "resolved", "booked", "completed"]):
+        return "N/A"
+    return _next_business_day_mmddyyyy()
+
+
+def infer_expectation(raw_details="", outcome="", follow_up_date=""):
+    outcome_text = clean_text(outcome)
+    follow_up = clean_text(follow_up_date)
+    if follow_up == "N/A" or outcome_text == "Closed / Resolved":
+        return "No further follow-up is needed unless the customer reaches back out."
+    if outcome_text == "Waiting on Customer":
+        return f"I am waiting on the customer and will follow up on {follow_up}."
+    if outcome_text == "Waiting on Order Readiness":
+        return f"I am waiting on the order readiness update and will follow up on {follow_up}."
+    if outcome_text == "Payment Pending":
+        return f"I am waiting on payment confirmation and will follow up on {follow_up}."
+    return f"I will follow up once an update is available. Follow-up date: {follow_up}."
+
+
+def build_hubspot_quoterite_streamlit_output(
+    customer_name="",
+    order_no="",
+    phone="",
+    email="",
+    request_type="Service",
+    issue_type="Other",
+    ticket_source="Phone",
+    ticket_name="",
+    raw_details="",
+    manual_follow_up_date="",
+    action_type="",
+    outcome="",
+):
+    inferred_ticket_name = clean_text(ticket_name) or infer_ticket_name(
+        request_type, issue_type, customer_name, order_no, raw_details
+    )
+    inferred_outcome = clean_text(outcome) or infer_outcome(raw_details, request_type)
+    inferred_action = clean_text(action_type) or infer_action_type(raw_details, request_type, inferred_outcome)
+    inferred_channel = infer_channel(raw_details, ticket_source, inferred_action)
+    follow_up_date = infer_follow_up_date(raw_details, inferred_outcome, manual_follow_up_date)
+    problem = infer_problem(customer_name, order_no, request_type, issue_type, raw_details)
+    resolution = infer_resolution(raw_details, request_type, issue_type, inferred_action)
+    expectation = infer_expectation(raw_details, inferred_outcome, follow_up_date)
+    notes = f"{resolution} Current status: {inferred_outcome}."
+
+    note_block = (
+        f"Ticket Name: {inferred_ticket_name}\n\n"
+        f"Summary:\n"
+        f"PROBLEM: {problem}\n\n"
+        f"RESOLUTION: {resolution}\n\n"
+        f"EXPECTATION: {expectation}"
+    )
+    streamlit_block = (
+        "Streamlit Entry\n\n"
+        "Logging Agent: Ed Torres\n"
+        f"Outcome: {inferred_outcome}\n"
+        f"Channel: {inferred_channel}\n"
+        f"Customer Name: {clean_text(customer_name) or 'N/A'}\n"
+        f"Email: {clean_text(email) or 'N/A'}\n"
+        f"Ticket / Task Update Name: {inferred_ticket_name}\n"
+        f"Action Type: {inferred_action}\n"
+        f"Order #: {clean_text(order_no) or 'N/A'}\n"
+        f"Phone: {clean_text(phone) or 'N/A'}\n"
+        f"Follow-Up Date: {follow_up_date}\n"
+        f"Notes: {notes}"
+    )
+    return note_block, streamlit_block
 
 
 def build_crm_note(raw_details, request_type, issue_type):
@@ -2989,39 +3191,6 @@ def _render_channel_count_inputs(prefix: str, label: str = "Channel Counts", hel
     return selected_channels
 
 
-KPI_ACTION_ALIASES = {
-    "outbound call": "Call w/ the customer",
-    "sms sent": "SMS w/ Customer",
-    "email sent": "Emailed Customer",
-    "scheduling request sent": "Submitted Scheduling Request",
-    "appointment scheduled": "Scheduled/Booked Service Appt",
-    "hubspot note added": "Ticket Updated/Notes",
-    "quoterite note added": "Ticket Updated/Notes",
-}
-
-KPI_OUTCOME_ALIASES = {
-    "resolved": "Closed/Resolved",
-    "waiting on customer": "Waiting on Customer",
-    "waiting on internal department": "Waiting on Internal Dpt",
-    "waiting on vendor": "Waiting on Vendor",
-}
-
-
-def _normalize_kpi_token(column: str, value: str) -> str:
-    text = clean_text(value)
-    if not text:
-        return ""
-
-    normalized_key = _normalize_entry_token(text)
-    if column == "io_channel":
-        return _match_option(text, IO_CHANNELS, IO_CHANNEL_ALIASES) or text
-    if column == "action_type":
-        return KPI_ACTION_ALIASES.get(normalized_key) or _match_option(text, IO_TASK_ACTIONS, IO_ACTION_ALIASES) or text
-    if column == "result_type":
-        return KPI_OUTCOME_ALIASES.get(normalized_key) or _match_option(text, IO_OUTCOMES, IO_OUTCOME_ALIASES) or text
-    return text
-
-
 def _is_terminal_outcome(value: str) -> bool:
     tokens = [token.lower() for token in _split_multi_value(value)]
     return any(token in TERMINAL_FOLLOWUP_OUTCOMES for token in tokens)
@@ -3253,6 +3422,28 @@ def test_openai_connection() -> tuple[bool, str]:
         return False, f"Connection failed: {msg}"
 
 
+def is_hubspot_streamlit_request(user_prompt: str, mode: str = "General") -> bool:
+    if clean_text(mode) == "Create HubSpot Ticket":
+        return True
+    prompt = clean_text(user_prompt).lower()
+    triggers = [
+        "hubspot + streamlit",
+        "hubspot and streamlit",
+        "hubspot ticket + streamlit",
+        "hubspot update + streamlit",
+        "quoterite note + streamlit",
+        "hubspot and quoterite",
+        "crm note + streamlit",
+        "ticket update + streamlit",
+        "hubspot ticket",
+        "hubspot update",
+        "quoterite note",
+        "crm note",
+        "ticket update",
+    ]
+    return any(trigger in prompt for trigger in triggers)
+
+
 def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", ticket_context: str = "") -> dict:
     text = clean_text(user_prompt)
     if not text:
@@ -3283,13 +3474,10 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         "crm_note": "",
         "sms": "",
         "email": "",
+        "note_block": "",
+        "streamlit_block": "",
         "output_text": "",
     }
-
-    if mode == "Create CRM Note":
-        package["crm_note"] = build_crm_note(text, request_type, issue_type)
-        package["output_text"] = package["crm_note"]
-        return package
 
     if mode == "Draft SMS":
         package["sms"] = build_customer_sms(customer_name, order_no, request_type, issue_type)
@@ -3334,31 +3522,53 @@ def generate_no_api_assistant_package(user_prompt: str, mode: str = "General", t
         )
         return package
 
+    if is_hubspot_streamlit_request(text, mode):
+        package["ticket_name"] = infer_ticket_name(request_type, issue_type, customer_name, order_no, text)
+        note_block, streamlit_block = build_hubspot_quoterite_streamlit_output(
+            customer_name=customer_name,
+            order_no=order_no,
+            phone=phone,
+            email="",
+            request_type=request_type,
+            issue_type=issue_type,
+            ticket_source=request_type_to_source(request_type),
+            ticket_name=package["ticket_name"],
+            raw_details=text,
+        )
+        package["note_block"] = note_block
+        package["streamlit_block"] = streamlit_block
+        package["summary"] = note_block
+        package["output_text"] = (
+            f"HubSpot / QuoteRite Note\n\n"
+            f"{note_block}\n\n"
+            f"{streamlit_block}"
+        )
+        return package
+
+    if mode == "Create CRM Note":
+        package["crm_note"] = build_crm_note(text, request_type, issue_type)
+        package["output_text"] = package["crm_note"]
+        return package
+
     package["ticket_name"] = build_ticket_name(request_type, issue_type, customer_name, order_no)
-    package["summary"] = build_hubspot_summary(
+    note_block, streamlit_block = build_hubspot_quoterite_streamlit_output(
         customer_name=customer_name,
         order_no=order_no,
         phone=phone,
+        email="",
         request_type=request_type,
         issue_type=issue_type,
-        assigned_by="Receptionist",
-        assigned_agent="Ed Torres",
-        hubspot_stage="New",
-        internal_status=default_internal_status(request_type),
-        attempt_no=1,
+        ticket_source=request_type_to_source(request_type),
+        ticket_name=package["ticket_name"],
         raw_details=text,
     )
-    package["crm_note"] = build_crm_note(text, request_type, issue_type)
-    package["sms"] = build_customer_sms(customer_name, order_no, request_type, issue_type)
-    email_subject, email_body = build_customer_email(customer_name, order_no, issue_type, text)
-    package["email"] = f"Subject: {email_subject}\n\n{email_body}"
+    package["note_block"] = note_block
+    package["streamlit_block"] = streamlit_block
+    package["summary"] = note_block
     package["output_text"] = (
-        "NO-API MODE (Local Rules)\n\n"
-        f"HubSpot Ticket Name:\n{package['ticket_name']}\n\n"
-        f"HubSpot Summary:\n{package['summary']}\n\n"
-        f"CRM Note:\n{package['crm_note']}\n\n"
-        f"Customer SMS:\n{package['sms']}\n\n"
-        f"Customer Email:\n{package['email']}"
+        f"HubSpot / QuoteRite Note\n\n"
+        f"{note_block}\n\n"
+        f"{streamlit_block}"
     )
     return package
 
@@ -3393,6 +3603,10 @@ def send_no_api_package_to_builder(pkg: dict) -> tuple[bool, str]:
         st.session_state["builder_generated_sms"] = pkg.get("sms", "")
     if pkg.get("email"):
         st.session_state["builder_generated_email"] = pkg.get("email", "")
+    if pkg.get("note_block"):
+        st.session_state["builder_generated_note_block"] = pkg.get("note_block", "")
+    if pkg.get("streamlit_block"):
+        st.session_state["builder_generated_streamlit_block"] = pkg.get("streamlit_block", "")
 
     st.session_state["selected_page"] = "HubSpot Ticket Builder V9"
     return True, "Sent to HubSpot Ticket Builder V9."
@@ -3489,31 +3703,25 @@ def do_generate_v9(save_to_tracker=False):
         raw_details,
     )
 
-    crm_note = build_crm_note(
-        raw_details,
-        final_request_type,
-        final_issue_type,
-    )
-
-    sms = build_customer_sms(
-        final_customer_name,
-        final_order_no,
-        final_request_type,
-        final_issue_type,
-    )
-
-    email_subject, email_body = build_customer_email(
-        final_customer_name,
-        final_order_no,
-        final_issue_type,
-        raw_details,
+    note_block, streamlit_block = build_hubspot_quoterite_streamlit_output(
+        customer_name=final_customer_name,
+        order_no=final_order_no,
+        phone=final_phone,
+        email="",
+        request_type=final_request_type,
+        issue_type=final_issue_type,
+        ticket_source=ticket_source,
+        ticket_name=ticket_name,
+        raw_details=raw_details,
     )
 
     st.session_state["builder_generated_ticket_name"] = ticket_name
     st.session_state["builder_generated_summary"] = summary
-    st.session_state["builder_generated_crm_note"] = crm_note
-    st.session_state["builder_generated_sms"] = sms
-    st.session_state["builder_generated_email"] = f"Subject: {email_subject}\n\n{email_body}"
+    st.session_state["builder_generated_crm_note"] = ""
+    st.session_state["builder_generated_sms"] = ""
+    st.session_state["builder_generated_email"] = ""
+    st.session_state["builder_generated_note_block"] = note_block
+    st.session_state["builder_generated_streamlit_block"] = streamlit_block
 
     if save_to_tracker:
         ok, msg = save_generated_ticket_to_tracker(
@@ -3733,18 +3941,16 @@ def _kpi_pick_period(prefix: str):
 def _kpi_token_count(df: pd.DataFrame, column: str, token: str) -> int:
     if df.empty or column not in df.columns:
         return 0
-    target = _normalize_kpi_token(column, token).lower()
+    target = clean_text(token).lower()
     if not target:
         return 0
-    total = 0
-    for value in df[column].fillna("").astype(str):
-        normalized_parts = [_normalize_kpi_token(column, part) for part in _split_multi_value(value)]
-        normalized_parts = [clean_text(part) for part in normalized_parts if clean_text(part)]
-        if column == "io_channel":
-            total += sum(1 for part in normalized_parts if part.lower() == target)
-        else:
-            total += int(target in {part.lower() for part in normalized_parts})
-    return int(total)
+    return int(
+        df[column]
+        .fillna("")
+        .astype(str)
+        .apply(lambda value: sum(1 for part in _split_multi_value(value) if clean_text(part).lower() == target))
+        .sum()
+    )
 
 
 def _kpi_load_data(owner_filter: str, start_date: date, end_date: date):
@@ -3791,9 +3997,9 @@ def kpi_dashboard_page():
 
     total_activities = len(df_activities) if not df_activities.empty else 0
     total_ticket_actions = (
-        _kpi_token_count(df_activities, "action_type", "New Ticket Created")
-        + _kpi_token_count(df_activities, "action_type", "Ticket Updated/Notes")
-        + _kpi_token_count(df_activities, "action_type", "Ticket Closed")
+        _kpi_token_count(df_activities, "action_type", "new ticket")
+        + _kpi_token_count(df_activities, "action_type", "ticket updated")
+        + _kpi_token_count(df_activities, "action_type", "ticket closed")
     )
 
     ref_cols = st.columns([1.4, 1, 1, 1])
@@ -4562,40 +4768,20 @@ def hubspot_ticket_builder_page_v9():
 
     st.divider()
 
-    if st.session_state.get("builder_generated_ticket_name"):
+    if st.session_state.get("builder_generated_note_block") or st.session_state.get("builder_generated_streamlit_block"):
         st.subheader("Generated Outputs")
 
-        st.text_input(
-            "HubSpot Ticket Name",
-            value=st.session_state.get("builder_generated_ticket_name", ""),
-            key="display_ticket_name_v9",
-        )
-
         st.text_area(
-            "HubSpot Summary",
-            value=st.session_state.get("builder_generated_summary", ""),
-            key="display_summary_v9",
+            "HubSpot / QuoteRite Note",
+            value=st.session_state.get("builder_generated_note_block", ""),
+            key="display_hubspot_quoterite_note_v9",
             height=220,
         )
 
         st.text_area(
-            "CRM Note",
-            value=st.session_state.get("builder_generated_crm_note", ""),
-            key="display_crm_note_v9",
-            height=180,
-        )
-
-        st.text_area(
-            "Customer SMS",
-            value=st.session_state.get("builder_generated_sms", ""),
-            key="display_sms_v9",
-            height=140,
-        )
-
-        st.text_area(
-            "Customer Email",
-            value=st.session_state.get("builder_generated_email", ""),
-            key="display_email_v9",
+            "Streamlit Entry",
+            value=st.session_state.get("builder_generated_streamlit_block", ""),
+            key="display_streamlit_entry_v9",
             height=240,
         )
 
@@ -4662,9 +4848,6 @@ def scheduling_assistant_page():
         for installer_name, note in SCHEDULING_INSTALLER_EXCEPTIONS:
             st.markdown(f"- **{installer_name}:** {note}")
 
-    with st.expander("Installer Contact Directory"):
-        st.dataframe(pd.DataFrame(SCHEDULING_INSTALLER_CONTACTS), use_container_width=True, hide_index=True)
-
     tab1, tab2 = st.tabs(["Scheduling Request Generator", "ZIP -> Installer Priority"])
 
     with tab1:
@@ -4705,62 +4888,88 @@ def scheduling_assistant_page():
                 st.caption(f"Suggested target date: {add_business_days(date.today(), 14).isoformat()}")
 
     with tab2:
-        zip_code = st.text_input("Enter ZIP code", max_chars=5)
-        if zip_code:
-            region = lookup_region_by_zip(zip_code)
-            if not region:
-                st.error("ZIP not found in Region_Map.csv.")
-            else:
-                st.success(f"Region: {region}")
-                installers = get_installer_priority_for_region(region)
+        st.caption(
+            "Use ZIP first when available. If the ZIP is missing or you want to confirm coverage visually, "
+            "open the installer area map and pick the area/region manually."
+        )
+        st.markdown(f"[Open Installer Area Map]({SCHEDULING_AREA_MAP_VIEW_URL})")
+        st.caption(f"[Open Original Custom Map Link]({SCHEDULING_AREA_MAP_EDIT_URL})")
 
-                route = "Moses Email" if normalize_region_for_dashboard(region) == "PS" else "Direct Scheduling"
-                st.info(f"Default Routing: {route}")
-                suggested_target_date = add_business_days(date.today(), 14).isoformat()
+        lookup_col, area_col = st.columns(2)
+        zip_code = lookup_col.text_input("Enter ZIP code", max_chars=5)
+        manual_region = area_col.selectbox(
+            "Or select area / region manually",
+            options=[""] + list(REGION_DISPLAY_NAMES.keys()),
+            format_func=lambda x: "Select area" if not x else REGION_DISPLAY_NAMES.get(x, x),
+        )
+
+        if zip_code:
+            st.markdown(f"[Open {re.sub(r'\\D', '', zip_code)[:5] or 'ZIP'} in Google Maps]({build_google_maps_zip_search_url(zip_code)})")
+
+        resolved_region = ""
+        if zip_code:
+            resolved_region = lookup_region_by_zip(zip_code)
+            if resolved_region:
+                st.success(f"Region from ZIP: {resolved_region}")
+            elif manual_region:
+                resolved_region = manual_region
+                st.warning("ZIP not found in Region_Map.csv. Using the manually selected area instead.")
+            else:
+                st.error("ZIP not found in Region_Map.csv. Use the area map and select a region manually.")
+        elif manual_region:
+            resolved_region = manual_region
+            st.info(f"Using selected area: {REGION_DISPLAY_NAMES.get(manual_region, manual_region)}")
+
+        if resolved_region:
+            installers = get_installer_priority_for_region(resolved_region)
+
+            route = "Moses Email" if normalize_region_for_dashboard(resolved_region) == "PS" else "Direct Scheduling"
+            st.info(f"Default Routing: {route}")
+            suggested_target_date = add_business_days(date.today(), 14).isoformat()
+
+            if route == "Direct Scheduling":
+                st.caption(f"Suggested target date: {suggested_target_date}")
+
+            if installers:
+                grouped_installers = group_installers_by_priority(installers)
+                exception_notes = get_matching_installer_exception_notes(installers)
+                m1, m2, m3 = st.columns(3)
+                m1.metric("P1 Installers", len(grouped_installers["P1"]))
+                m2.metric("P2 Installers", len(grouped_installers["P2"]))
+                m3.metric("P3 Installers", len(grouped_installers["P3"]))
+
+                for priority in ["P1", "P2", "P3"]:
+                    items = grouped_installers[priority]
+                    if not items:
+                        continue
+                    st.markdown(f"**{priority} Priority**")
+                    out = pd.DataFrame(
+                        [
+                            {
+                                "Priority Order": i + 1,
+                                "Installer": item["installer"],
+                            }
+                            for i, item in enumerate(items)
+                        ]
+                    )
+                    st.dataframe(out, use_container_width=True, hide_index=True)
+
+                if exception_notes:
+                    st.markdown("**Installer Availability Exceptions**")
+                    for note in exception_notes:
+                        st.markdown(f"- {note}")
 
                 if route == "Direct Scheduling":
-                    st.caption(f"Suggested target date: {suggested_target_date}")
-
-                if installers:
-                    grouped_installers = group_installers_by_priority(installers)
-                    exception_notes = get_matching_installer_exception_notes(installers)
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("P1 Installers", len(grouped_installers["P1"]))
-                    m2.metric("P2 Installers", len(grouped_installers["P2"]))
-                    m3.metric("P3 Installers", len(grouped_installers["P3"]))
-
-                    for priority in ["P1", "P2", "P3"]:
-                        items = grouped_installers[priority]
-                        if not items:
-                            continue
-                        st.markdown(f"**{priority} Priority**")
-                        out = pd.DataFrame(
-                            [
-                                {
-                                    "Priority Order": i + 1,
-                                    "Installer": item["installer"],
-                                }
-                                for i, item in enumerate(items)
-                            ]
-                        )
-                        st.dataframe(out, use_container_width=True, hide_index=True)
-
-                    if exception_notes:
-                        st.markdown("**Installer Availability Exceptions**")
-                        for note in exception_notes:
-                            st.markdown(f"- {note}")
-
-                    if route == "Direct Scheduling":
-                        copy_block = build_scheduling_priority_copy_block(
-                            region,
-                            installers,
-                            suggested_target_date,
-                            exception_notes=exception_notes,
-                        )
-                        st.markdown("**Copy Block**")
-                        st.code(copy_block, language="text")
-                else:
-                    st.warning("No installers found for that region in Regional Dashboard.")
+                    copy_block = build_scheduling_priority_copy_block(
+                        resolved_region,
+                        installers,
+                        suggested_target_date,
+                        exception_notes=exception_notes,
+                    )
+                    st.markdown("**Copy Block**")
+                    st.code(copy_block, language="text")
+            else:
+                st.warning("No installers found for that region in Regional Dashboard.")
 
 def parse_eta_window_days(window_text: str) -> tuple[int, int]:
     txt = clean_text(window_text).lower()
@@ -5037,7 +5246,7 @@ def lacb_assistant_page():
 
         pkg = st.session_state.get("assistant_last_no_api_package")
         if pkg:
-            st.info("HubSpot Ticket Builder V9 was retired. Use this output directly, or log the result in Ticket Tracker / Inbound / Outbound Activity Log.")
+            st.info("Use this output directly, or send the generated fields to HubSpot Ticket Builder V9 / Ticket Tracker as needed.")
 
 
     history = st.session_state.get("assistant_chat_history", [])
@@ -5296,6 +5505,7 @@ PAGES = {
     "KPI Graph Dashboard": kpi_graph_dashboard_page,
     "Inbound / Outbound Activity Log": inbound_outbound_activity_log_page,
     "Ticket Tracker": ticket_tracker_page,
+    "HubSpot Ticket Builder V9": hubspot_ticket_builder_page_v9,
     "Service / Repair Builder": service_repair_builder_page,
     "Scheduling Assistant": scheduling_assistant_page,
     "ETA Checker": eta_checker_page,
