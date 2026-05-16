@@ -1,4 +1,5 @@
 import os
+import base64
 import re
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -1069,6 +1070,7 @@ def init_v9_state():
         "assistant_use_ticket_context": False,
         "assistant_user_prompt": "",
         "assistant_reset_requested": False,
+        "assistant_screenshot_uploader_key": 0,
 
         # Ticket selection
         "selected_ticket_id": None,
@@ -3368,7 +3370,7 @@ def _build_followup_activity_groups():
 # =========================================================
 
 def get_openai_client():
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = _openai_api_key()
     if not api_key or OpenAI is None:
         return None
     return OpenAI(api_key=api_key)
@@ -3376,7 +3378,7 @@ def get_openai_client():
 
 def get_assistant_health_status() -> tuple[bool, str, str]:
     has_openai_pkg = OpenAI is not None
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = _openai_api_key()
     has_api_key = bool(api_key)
 
     if has_openai_pkg and has_api_key:
@@ -3397,7 +3399,7 @@ def get_assistant_health_status() -> tuple[bool, str, str]:
     return False, "missing", msg
 
 def get_masked_api_key_preview() -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    api_key = _openai_api_key()
     if not api_key:
         return "Not set"
     if len(api_key) <= 8:
@@ -5077,6 +5079,93 @@ def apply_assistant_reset():
         st.session_state["assistant_user_prompt"] = ""
 
 
+def _openai_api_key() -> str:
+    return clean_text(os.getenv("OPENAI_API_KEY") or _safe_secret_get("OPENAI_API_KEY", ""))
+
+
+def _openai_vision_model() -> str:
+    return clean_text(os.getenv("OPENAI_VISION_MODEL") or _safe_secret_get("OPENAI_VISION_MODEL", "")) or "gpt-5"
+
+
+def _extract_labeled_value(text: str, labels: list[str]) -> str:
+    for label in labels:
+        pattern = rf"(?im)^\s*{re.escape(label)}\s*:\s*(.+?)\s*$"
+        match = re.search(pattern, clean_text(text))
+        if match:
+            value = clean_text(match.group(1))
+            if value and value.upper() not in {"N/A", "NA", "NONE", "UNKNOWN"}:
+                return value
+    return ""
+
+
+def analyze_assistant_screenshots(uploaded_images, user_prompt: str, ticket_context: str = "") -> tuple[dict | None, str]:
+    if not uploaded_images:
+        return None, ""
+
+    client = get_openai_client()
+    if client is None:
+        return None, "Screenshots uploaded for visual reference only. Paste the relevant text or enable vision support to analyze screenshots automatically."
+
+    content = [
+        {
+            "type": "input_text",
+            "text": (
+                "Extract CRM source details from these screenshot(s) for LA Custom Blinds. "
+                "Return only these labeled lines, using N/A if unknown:\n"
+                "Customer Name:\n"
+                "Order #:\n"
+                "Phone:\n"
+                "Email:\n"
+                "Issue:\n"
+                "Resolution / Action Taken:\n"
+                "Current Status:\n"
+                "Next Steps:\n\n"
+                f"User prompt:\n{clean_text(user_prompt) or 'N/A'}\n\n"
+                f"Ticket context:\n{clean_text(ticket_context) or 'N/A'}"
+            ),
+        }
+    ]
+
+    for uploaded in uploaded_images:
+        try:
+            image_bytes = uploaded.getvalue()
+            mime_type = clean_text(getattr(uploaded, "type", "")) or "image/png"
+            encoded = base64.b64encode(image_bytes).decode("ascii")
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{mime_type};base64,{encoded}",
+                }
+            )
+        except Exception:
+            continue
+
+    if len(content) == 1:
+        return None, "Screenshots uploaded for visual reference only. Paste the relevant text or enable vision support to analyze screenshots automatically."
+
+    try:
+        response = client.responses.create(
+            model=_openai_vision_model(),
+            input=[{"role": "user", "content": content}],
+        )
+        extracted = clean_text(response.output_text)
+    except Exception as exc:
+        return None, f"Screenshot analysis failed: {exc}"
+
+    fields = {
+        "customer_name": _extract_labeled_value(extracted, ["Customer Name", "Customer"]),
+        "order_no": _extract_labeled_value(extracted, ["Order #", "Order Number", "Order"]),
+        "phone": _extract_labeled_value(extracted, ["Phone", "Phone Number"]),
+        "email": _extract_labeled_value(extracted, ["Email", "Email Address"]),
+        "issue": _extract_labeled_value(extracted, ["Issue", "Problem"]),
+        "resolution": _extract_labeled_value(extracted, ["Resolution / Action Taken", "Resolution", "Action Taken"]),
+        "status": _extract_labeled_value(extracted, ["Current Status", "Status"]),
+        "next_steps": _extract_labeled_value(extracted, ["Next Steps", "Expectation"]),
+        "raw_extraction": extracted,
+    }
+    return fields, ""
+
+
 def lacb_assistant_page():
     apply_assistant_reset()
 
@@ -5091,7 +5180,7 @@ def lacb_assistant_page():
 
     with st.expander("Assistant Settings & Diagnostics", expanded=False):
         has_pkg = OpenAI is not None
-        has_key = bool(os.getenv("OPENAI_API_KEY", "").strip())
+        has_key = bool(_openai_api_key())
         pkg_label = "Yes" if has_pkg else "No"
         key_label = "Yes" if has_key else "No"
         st.write(f"openai package detected: {pkg_label}")
@@ -5154,6 +5243,25 @@ def lacb_assistant_page():
 
     st.info(prompt_help.get(st.session_state["assistant_mode"], ""))
 
+    st.info("Privacy note: screenshots may contain customer information. Upload screenshots only if allowed by company policy.")
+    upload_key = f"assistant_uploaded_screenshots_{st.session_state.get('assistant_screenshot_uploader_key', 0)}"
+    uploaded_screenshots = st.file_uploader(
+        "Upload screenshots / images",
+        type=["png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key=upload_key,
+    )
+    if uploaded_screenshots:
+        preview_cols = st.columns(min(3, len(uploaded_screenshots)))
+        for idx, uploaded in enumerate(uploaded_screenshots):
+            with preview_cols[idx % len(preview_cols)]:
+                st.image(uploaded, caption=getattr(uploaded, "name", f"Screenshot {idx + 1}"), use_container_width=True)
+        if st.button("Clear uploaded screenshots", key="assistant_clear_screenshots_btn"):
+            st.session_state["assistant_screenshot_uploader_key"] = st.session_state.get("assistant_screenshot_uploader_key", 0) + 1
+            st.rerun()
+        if not assistant_ready:
+            st.info("Screenshots uploaded for visual reference only. Paste the relevant text or enable vision support to analyze screenshots automatically.")
+
     st.markdown("### Prompt Templates")
     template_map = get_all_prompt_templates()
     tpl1, tpl2 = st.columns([3, 1])
@@ -5206,10 +5314,85 @@ def lacb_assistant_page():
     if c1.button("Run Assistant", disabled=run_disabled):
         user_prompt = clean_text(st.session_state.get("assistant_user_prompt", ""))
         if user_prompt:
-            if no_api_mode:
+            mode = st.session_state.get("assistant_mode", "General")
+            separate_text_mode = mode in {"Draft SMS", "Draft Email", "Scheduling Request", "Summarize Notes"}
+            if uploaded_screenshots and assistant_ready and not separate_text_mode:
+                vision_fields, vision_message = analyze_assistant_screenshots(
+                    uploaded_screenshots,
+                    user_prompt=user_prompt,
+                    ticket_context=ticket_context,
+                )
+                if vision_fields:
+                    raw_details = "\n".join(
+                        [
+                            f"User Request: {user_prompt}",
+                            f"Issue: {vision_fields.get('issue') or 'N/A'}",
+                            f"Resolution / Action Taken: {vision_fields.get('resolution') or 'N/A'}",
+                            f"Current Status: {vision_fields.get('status') or 'N/A'}",
+                            f"Next Steps: {vision_fields.get('next_steps') or 'N/A'}",
+                        ]
+                    )
+                    request_type = "Service"
+                    issue_type = vision_fields.get("issue") or "Other"
+                    ticket_name = infer_ticket_name(
+                        request_type,
+                        issue_type,
+                        vision_fields.get("customer_name", ""),
+                        vision_fields.get("order_no", ""),
+                        raw_details,
+                    )
+                    note_block, streamlit_block = build_hubspot_quoterite_streamlit_output(
+                        customer_name=vision_fields.get("customer_name", ""),
+                        order_no=vision_fields.get("order_no", ""),
+                        phone=vision_fields.get("phone", ""),
+                        email=vision_fields.get("email", ""),
+                        request_type=request_type,
+                        issue_type=issue_type,
+                        ticket_source="Image Upload",
+                        ticket_name=ticket_name,
+                        raw_details=raw_details,
+                    )
+                    pkg = {
+                        "raw_details": raw_details,
+                        "customer_name": vision_fields.get("customer_name", ""),
+                        "order_no": vision_fields.get("order_no", ""),
+                        "phone": vision_fields.get("phone", ""),
+                        "request_type": request_type,
+                        "issue_type": issue_type,
+                        "ticket_source": "Image Upload",
+                        "ticket_name": ticket_name,
+                        "summary": note_block,
+                        "crm_note": "",
+                        "sms": "",
+                        "email": "",
+                        "note_block": note_block,
+                        "streamlit_block": streamlit_block,
+                        "output_text": f"HubSpot / QuoteRite Note\n\n{note_block}\n\n{streamlit_block}",
+                    }
+                    response_text = pkg["output_text"]
+                    st.session_state["assistant_last_no_api_package"] = pkg
+                else:
+                    st.info(vision_message or "Screenshots uploaded for visual reference only. Paste the relevant text or enable vision support to analyze screenshots automatically.")
+                    pkg = generate_no_api_assistant_package(
+                        user_prompt=user_prompt,
+                        mode=mode,
+                        ticket_context=ticket_context,
+                    )
+                    response_text = pkg.get("output_text", "")
+                    st.session_state["assistant_last_no_api_package"] = pkg
+            elif uploaded_screenshots and not assistant_ready and not separate_text_mode:
+                st.info("Screenshots uploaded for visual reference only. Paste the relevant text or enable vision support to analyze screenshots automatically.")
                 pkg = generate_no_api_assistant_package(
                     user_prompt=user_prompt,
-                    mode=st.session_state.get("assistant_mode", "General"),
+                    mode=mode,
+                    ticket_context=ticket_context,
+                )
+                response_text = pkg.get("output_text", "")
+                st.session_state["assistant_last_no_api_package"] = pkg
+            elif no_api_mode:
+                pkg = generate_no_api_assistant_package(
+                    user_prompt=user_prompt,
+                    mode=mode,
                     ticket_context=ticket_context,
                 )
                 response_text = pkg.get("output_text", "")
