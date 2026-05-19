@@ -467,54 +467,84 @@ REGION_DISPLAY_NAMES = {
     "VENTURA": "Ventura",
 }
 ETA_REFERENCE = {
-    "Roller Shades": [
-        {"vendor": "LA Custom Blinds", "turnaround": "3 DAYS-1 WEEK", "preschedule": "1-2 WEEKS"},
-    ],
     "Zebra Shades": [
-        {"vendor": "Albright", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
-        {"vendor": "LA Custom Blinds", "turnaround": "2-3 WEEKS", "preschedule": "3-4 WEEKS"},
+        {"vendor": "Allbright", "turnaround": "3-4 Weeks", "primary_contact": "Lei Xu", "phone": "(609) 304-1878", "email": "yongshunus@gmail.com", "owner_management": "Lei Xu / Yong Shun", "resource": "Excel tracking sheet; email preferred"},
+        {"vendor": "LA Custom Blinds", "turnaround": "2 Weeks", "primary_contact": "Reyna Reyes", "phone": "", "email": "", "owner_management": "", "resource": "Internal spreadsheet"},
+        {"vendor": "Kristine", "turnaround": "2-3 Weeks; Rush: 1-2 Weeks", "primary_contact": "Maria Aburto", "phone": "786-661-2340 ext. 308", "email": "maria@kristinewindowtreatments.com", "owner_management": "Howard Rothman, Owner", "resource": "Phone/email"},
     ],
     "Cell Shades": [
-        {"vendor": "Blind Express", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
-        {"vendor": "Lantex", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
+        {"vendor": "Lantex", "turnaround": "3-4 Weeks", "primary_contact": "Lei Xu", "phone": "(609) 304-1878", "email": "", "owner_management": "Lei Xu / Yong Shun", "resource": "Email/website"},
+        {"vendor": "Blind Xpress", "turnaround": "3-4 Weeks", "primary_contact": "Heather Rising", "phone": "734-421-8844", "email": "heather@blindxpress.com", "owner_management": "Michelle Jolly, Production Manager", "resource": "Phone or email; office hours 9-4 Eastern Mon-Thu"},
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Hunter Douglas", "turnaround": "4 Weeks", "primary_contact": "N/A", "phone": "800-789-0331; 844-486-8373", "email": "N/A", "owner_management": "N/A", "resource": "Special request / motorized skylight"},
+        {"vendor": "Alta", "turnaround": "2-3 Weeks; rush by request; call/email for exact ETA", "primary_contact": "", "phone": "800-669-6333", "email": "altacustomerservice@custombrands.com; altacustomerservice@custombrandsgroup.com", "owner_management": "N/A", "resource": "Email"},
     ],
-    "Zipper Shades": [
-        {"vendor": "LA Custom Blinds", "turnaround": "1-2 WEEKS", "preschedule": "3-4 WEEKS"},
-        {"vendor": "Superior Blinds MF", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
-    ],
-    "Exterior Shades": [
-        {"vendor": "LA Custom Blinds", "turnaround": "2-3 WEEKS", "preschedule": "3-4 WEEKS"},
-    ],
-    "Woven Wood": [
-        {"vendor": "Lantex", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
+    "Woven Shades": [
+        {"vendor": "Lantex", "turnaround": "3-4 Weeks", "primary_contact": "Lei Xu", "phone": "(609) 304-1878", "email": "", "owner_management": "Lei Xu / Yong Shun", "resource": "Email/website"},
+        {"vendor": "Alta", "turnaround": "2-3 Weeks; rush by request; call/email for exact ETA", "primary_contact": "", "phone": "800-669-6333", "email": "altacustomerservice@custombrands.com; altacustomerservice@custombrandsgroup.com", "owner_management": "N/A", "resource": "Email"},
     ],
     "Sheer Shades": [
-        {"vendor": "Lantex", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
+        {"vendor": "Lantex", "turnaround": "3-4 Weeks", "primary_contact": "Lei Xu", "phone": "(609) 304-1878", "email": "", "owner_management": "Lei Xu / Yong Shun", "resource": "Email/website"},
+        {"vendor": "Kristine", "turnaround": "2-3 Weeks; Rush: 1-2 Weeks", "primary_contact": "Maria Aburto", "phone": "786-661-2340 ext. 308", "email": "maria@kristinewindowtreatments.com", "owner_management": "Howard Rothman, Owner", "resource": "Phone/email"},
     ],
-    "Shutters": [
-        {"vendor": "A Custom Shutters", "turnaround": "4-5 WEEKS", "preschedule": "5-6 WEEKS"},
+    "Horizontal Sheers": [
+        {"vendor": "Ecowin RNT", "turnaround": "3-4 Weeks", "primary_contact": "Gil", "phone": "+1 (416) 346-7963", "email": "gil@ecowinrnt.ca", "owner_management": "", "resource": "Email/phone"},
     ],
-    "Faux Wood": [
-        {"vendor": "Superior Blinds MF", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
+    "Roller Shades": [
+        {"vendor": "LA Custom Blinds", "turnaround": "2 Weeks", "primary_contact": "Reyna Reyes", "phone": "", "email": "", "owner_management": "", "resource": "Internal spreadsheet"},
+        {"vendor": "Kristine", "turnaround": "2-3 Weeks; Rush: 1-2 Weeks", "primary_contact": "Maria Aburto", "phone": "786-661-2340 ext. 308", "email": "maria@kristinewindowtreatments.com", "owner_management": "Howard Rothman, Owner", "resource": "Phone/email"},
     ],
-    "Woodblinds": [
-        {"vendor": "Superior Blinds MF", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
+    "Exterior Shades": [
+        {"vendor": "LA Custom Blinds", "turnaround": "2 Weeks", "primary_contact": "Reyna Reyes", "phone": "", "email": "", "owner_management": "", "resource": "Internal spreadsheet"},
     ],
-    "Aluminum": [
-        {"vendor": "Blind Express", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
-        {"vendor": "Superior Blinds MF", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
+    "Zipper Shades": [
+        {"vendor": "Superior Blinds Manufacturing", "turnaround": "3-4 Weeks", "primary_contact": "Jenny Rivera", "phone": "(951) 358-0793", "email": "jenny.r@superiorblindsmfg.com", "owner_management": "Jenny Rivera", "resource": "Phone; product delivery every Monday"},
+        {"vendor": "Apollo", "turnaround": "2-3 Weeks", "primary_contact": "Anthony Ibarra", "phone": "760-532-1067", "email": "Pluna@sunairawnings.com", "owner_management": "", "resource": ""},
+    ],
+    "Panel Tracks": [
+        {"vendor": "Kristine", "turnaround": "2-3 Weeks; Rush: 1-2 Weeks", "primary_contact": "Maria Aburto", "phone": "786-661-2340 ext. 308", "email": "maria@kristinewindowtreatments.com", "owner_management": "Howard Rothman, Owner", "resource": "Phone/email"},
+    ],
+    "Metal Blinds": [
+        {"vendor": "Blind Xpress", "turnaround": "3-4 Weeks", "primary_contact": "Heather Rising", "phone": "734-421-8844", "email": "heather@blindxpress.com", "owner_management": "Michelle Jolly, Production Manager", "resource": "Phone or email; office hours 9-4 Eastern Mon-Thu"},
+    ],
+    "Aluminum Blinds": [
+        {"vendor": "Blind Xpress", "turnaround": "3-4 Weeks", "primary_contact": "Heather Rising", "phone": "734-421-8844", "email": "heather@blindxpress.com", "owner_management": "Michelle Jolly, Production Manager", "resource": "Phone or email; office hours 9-4 Eastern Mon-Thu"},
+        {"vendor": "Superior Blinds Manufacturing", "turnaround": "3-4 Weeks", "primary_contact": "Jenny Rivera", "phone": "(951) 358-0793", "email": "jenny.r@superiorblindsmfg.com", "owner_management": "Jenny Rivera", "resource": "Phone; product delivery every Monday"},
     ],
     "Vertical Blinds": [
-        {"vendor": "Blind Express", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
-        {"vendor": "Superior Blinds MF", "turnaround": "3-4 WEEKS", "preschedule": "5-6 WEEKS"},
+        {"vendor": "Blind Xpress", "turnaround": "3-4 Weeks", "primary_contact": "Heather Rising", "phone": "734-421-8844", "email": "heather@blindxpress.com", "owner_management": "Michelle Jolly, Production Manager", "resource": "Phone or email; office hours 9-4 Eastern Mon-Thu"},
+        {"vendor": "Superior Blinds Manufacturing", "turnaround": "3-4 Weeks", "primary_contact": "Jenny Rivera", "phone": "(951) 358-0793", "email": "jenny.r@superiorblindsmfg.com", "owner_management": "Jenny Rivera", "resource": "Phone; product delivery every Monday"},
+        {"vendor": "Sundance / J-Mac Blinds", "turnaround": "2-3 Weeks; call for possible rush", "primary_contact": "Jose Chicas", "phone": "562-350-8669", "email": "jmac.jose562@gmail.com", "owner_management": "Jose Chicas", "resource": "Phone/email"},
+    ],
+    "Fabric Verticals": [
+        {"vendor": "Blind Xpress", "turnaround": "3-4 Weeks", "primary_contact": "Heather Rising", "phone": "734-421-8844", "email": "heather@blindxpress.com", "owner_management": "Michelle Jolly, Production Manager", "resource": "Phone or email; office hours 9-4 Eastern Mon-Thu"},
+    ],
+    "Faux Wood": [
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Superior Blinds Manufacturing", "turnaround": "3-4 Weeks", "primary_contact": "Jenny Rivera", "phone": "(951) 358-0793", "email": "jenny.r@superiorblindsmfg.com", "owner_management": "Jenny Rivera", "resource": "Phone; product delivery every Monday"},
+        {"vendor": "Patrician / Mariak / Springs Window Fashions", "turnaround": "2-3 Weeks; call for possible rush", "primary_contact": "Debby Alfaro-Cardenas", "phone": "310-661-4400 ext. 2; Mariak CC 800-562-7425", "email": "retailorders@springwindowsfashion.com; csr@mariak.com; internet.support@mariak.com", "owner_management": "N/A", "resource": "Website/email"},
+    ],
+    "Wood Blinds": [
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Superior Blinds Manufacturing", "turnaround": "3-4 Weeks", "primary_contact": "Jenny Rivera", "phone": "(951) 358-0793", "email": "jenny.r@superiorblindsmfg.com", "owner_management": "Jenny Rivera", "resource": "Phone; product delivery every Monday"},
+    ],
+    "Shutters": [
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "A Custom Shutter", "turnaround": "4-5 Weeks; rush by request", "primary_contact": "Stephanie Lopez", "phone": "Text (818) 359-8547", "email": "acustomshutters888@gmail.com", "owner_management": "Aaron Lopez", "resource": "Text"},
+        {"vendor": "ShutterSmart", "turnaround": "5-6 Weeks", "primary_contact": "Rossana Mendez Burns", "phone": "Office (800) 737-4569 ext. 165; Direct (323) 717-4072", "email": "Rossanab@uspolymersinc.com", "owner_management": "", "resource": "Phone/email"},
+        {"vendor": "Bridge Shutter & More", "turnaround": "3 Weeks", "primary_contact": "", "phone": "909-616-9986", "email": "bridgeshutterandmore@gmail.com", "owner_management": "", "resource": "Phone/email; office hours M-F 8:00am-4:30pm"},
+        {"vendor": "Elegant Window Fashions / Elegant Shutters", "turnaround": "4-5 Weeks", "primary_contact": "N/A", "phone": "888-615-0642; option 3, then 3, then 112 for shutters", "email": "", "owner_management": "N/A", "resource": "Website"},
+        {"vendor": "Onyx Shutters", "turnaround": "5-6 Weeks", "primary_contact": "Mandy", "phone": "1-626-965-7773", "email": "cs01@onyxshutters.com", "owner_management": "", "resource": "Website; shipped by sea and land; mainly used by Moses for Palm Springs"},
+        {"vendor": "Kristine", "turnaround": "Shutters: 6-10 Weeks; Rush shutters: 3-4 Weeks", "primary_contact": "Maria Aburto", "phone": "786-661-2340 ext. 308", "email": "maria@kristinewindowtreatments.com", "owner_management": "Howard Rothman, Owner", "resource": "Phone/email"},
     ],
     "Roman Shades": [
-        {"vendor": "Richard Williams", "turnaround": "6-8 WEEKS", "preschedule": "9-10 WEEKS"},
-        {"vendor": "Drapemax", "turnaround": "4-5 WEEKS", "preschedule": ""},
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Richard Williams Drapery", "turnaround": "N/A", "primary_contact": "Katty McQueen", "phone": "805-258-6005", "email": "katty@lacustomblinds.com", "owner_management": "N/A", "resource": "Reach Cristina C; RingCentral Roman Shades & Draperies Chat"},
+        {"vendor": "Drapemax", "turnaround": "4 Weeks", "primary_contact": "", "phone": "", "email": "", "owner_management": "", "resource": "Reach Cristina C; RingCentral Roman Shades & Draperies Chat"},
     ],
     "Drapery": [
-        {"vendor": "Richard Williams", "turnaround": "6-8 WEEKS", "preschedule": "9-10 WEEKS"},
-        {"vendor": "Drapemax", "turnaround": "4-5 WEEKS", "preschedule": ""},
+        {"vendor": "Richard Williams Drapery", "turnaround": "N/A", "primary_contact": "Katty McQueen", "phone": "805-258-6005", "email": "katty@lacustomblinds.com", "owner_management": "N/A", "resource": "Reach Cristina C; RingCentral Roman Shades & Draperies Chat"},
+        {"vendor": "Drapemax", "turnaround": "4 Weeks", "primary_contact": "", "phone": "", "email": "", "owner_management": "", "resource": "Reach Cristina C; RingCentral Roman Shades & Draperies Chat"},
     ],
 }
 ASSISTANT_PROMPT_TEMPLATES = {
@@ -5160,7 +5190,8 @@ def parse_eta_window_days(window_text: str) -> tuple[int, int]:
 
 def eta_checker_page():
     st.title("ETA Checker")
-    st.caption("Estimate turnaround ETA date range by product type, vendor, and date sent to vendor.")
+    st.caption("Estimate turnaround ETA date range by product type/vendor and view vendor contact reference details.")
+    st.info("Security note: site logins, passwords, and account credential fields are intentionally excluded from this app.")
 
     product_options = sorted(list(ETA_REFERENCE.keys()))
     product_type = st.selectbox("Shade/Product Type", product_options, key="eta_product_type")
@@ -5178,6 +5209,11 @@ def eta_checker_page():
 
     turnaround_text = selected.get("turnaround", "")
     preschedule_text = selected.get("preschedule", "")
+    primary_contact = selected.get("primary_contact", "")
+    phone = selected.get("phone", "")
+    email = selected.get("email", "")
+    owner_management = selected.get("owner_management", "")
+    resource = selected.get("resource", "")
 
     min_days, max_days = parse_eta_window_days(turnaround_text)
     pre_min_days, pre_max_days = parse_eta_window_days(preschedule_text)
@@ -5195,6 +5231,28 @@ def eta_checker_page():
     st.write(f"**Vendor:** {vendor}")
     st.write(f"**Date Sent:** {sent_date.strftime('%Y-%m-%d')}")
 
+    st.subheader("Vendor Contact")
+    d1, d2 = st.columns(2)
+    with d1:
+        st.write(f"**Primary Contact:** {primary_contact or 'N/A'}")
+        st.write(f"**Phone:** {phone or 'N/A'}")
+        st.write(f"**Email:** {email or 'N/A'}")
+    with d2:
+        st.write(f"**Owner / Management:** {owner_management or 'N/A'}")
+        st.write(f"**Resource:** {resource or 'N/A'}")
+
+    copy_lines = [
+        f"Vendor: {vendor}",
+        f"Product: {product_type}",
+        f"Turnaround: {turnaround_text or 'N/A'}",
+        f"ETA: {eta_start.strftime('%Y-%m-%d') if min_days > 0 else 'N/A'} to {eta_end.strftime('%Y-%m-%d') if max_days > 0 else 'N/A'}",
+        f"Primary Contact: {primary_contact or 'N/A'}",
+        f"Phone: {phone or 'N/A'}",
+        f"Email: {email or 'N/A'}",
+        f"Resource: {resource or 'N/A'}",
+    ]
+    st.text_area("Copy-Ready Vendor ETA Note", value="\n".join(copy_lines), height=190)
+
     if product_type in {"Roman Shades", "Drapery"}:
         st.warning(
             "Reminder: send an internal message to the Drapery and Roman Shades department "
@@ -5208,6 +5266,22 @@ def eta_checker_page():
             f"Preschedule window: {preschedule_text} | Suggested preschedule ETA: "
             f"{pre_start.strftime('%Y-%m-%d')} to {pre_end.strftime('%Y-%m-%d')}"
         )
+
+    with st.expander("All vendors for selected product"):
+        display_rows = []
+        for row in vendor_rows:
+            display_rows.append(
+                {
+                    "Vendor": row.get("vendor", ""),
+                    "Turnaround": row.get("turnaround", ""),
+                    "Primary Contact": row.get("primary_contact", ""),
+                    "Phone": row.get("phone", ""),
+                    "Email": row.get("email", ""),
+                    "Owner / Management": row.get("owner_management", ""),
+                    "Resource": row.get("resource", ""),
+                }
+            )
+        st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
 
 def get_selected_ticket_context_for_assistant() -> str:
     ticket_id = st.session_state.get("selected_ticket_id")
