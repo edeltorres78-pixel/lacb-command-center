@@ -475,7 +475,7 @@ ETA_REFERENCE = {
     "Cell Shades": [
         {"vendor": "Lantex", "turnaround": "3-4 Weeks", "primary_contact": "Lei Xu", "phone": "(609) 304-1878", "email": "", "owner_management": "Lei Xu / Yong Shun", "resource": "Email/website"},
         {"vendor": "Blind Xpress", "turnaround": "3-4 Weeks", "primary_contact": "Heather Rising", "phone": "734-421-8844", "email": "heather@blindxpress.com", "owner_management": "Michelle Jolly, Production Manager", "resource": "Phone or email; office hours 9-4 Eastern Mon-Thu"},
-        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "norman.shutter@afdfloor.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
         {"vendor": "Hunter Douglas", "turnaround": "4 Weeks", "primary_contact": "N/A", "phone": "800-789-0331; 844-486-8373", "email": "N/A", "owner_management": "N/A", "resource": "Special request / motorized skylight"},
         {"vendor": "Alta", "turnaround": "2-3 Weeks; rush by request; call/email for exact ETA", "primary_contact": "", "phone": "800-669-6333", "email": "altacustomerservice@custombrands.com; altacustomerservice@custombrandsgroup.com", "owner_management": "N/A", "resource": "Email"},
     ],
@@ -520,16 +520,16 @@ ETA_REFERENCE = {
         {"vendor": "Blind Xpress", "turnaround": "3-4 Weeks", "primary_contact": "Heather Rising", "phone": "734-421-8844", "email": "heather@blindxpress.com", "owner_management": "Michelle Jolly, Production Manager", "resource": "Phone or email; office hours 9-4 Eastern Mon-Thu"},
     ],
     "Faux Wood": [
-        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "norman.shutter@afdfloor.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
         {"vendor": "Superior Blinds Manufacturing", "turnaround": "3-4 Weeks", "primary_contact": "Jenny Rivera", "phone": "(951) 358-0793", "email": "jenny.r@superiorblindsmfg.com", "owner_management": "Jenny Rivera", "resource": "Phone; product delivery every Monday"},
         {"vendor": "Patrician / Mariak / Springs Window Fashions", "turnaround": "2-3 Weeks; call for possible rush", "primary_contact": "Debby Alfaro-Cardenas", "phone": "310-661-4400 ext. 2; Mariak CC 800-562-7425", "email": "retailorders@springwindowsfashion.com; csr@mariak.com; internet.support@mariak.com", "owner_management": "N/A", "resource": "Website/email"},
     ],
     "Wood Blinds": [
-        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "norman.shutter@afdfloor.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
         {"vendor": "Superior Blinds Manufacturing", "turnaround": "3-4 Weeks", "primary_contact": "Jenny Rivera", "phone": "(951) 358-0793", "email": "jenny.r@superiorblindsmfg.com", "owner_management": "Jenny Rivera", "resource": "Phone; product delivery every Monday"},
     ],
     "Shutters": [
-        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "norman.shutter@afdfloor.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
         {"vendor": "A Custom Shutter", "turnaround": "4-5 Weeks; rush by request", "primary_contact": "Stephanie Lopez", "phone": "Text (818) 359-8547", "email": "acustomshutters888@gmail.com", "owner_management": "Aaron Lopez", "resource": "Text"},
         {"vendor": "ShutterSmart", "turnaround": "5-6 Weeks", "primary_contact": "Rossana Mendez Burns", "phone": "Office (800) 737-4569 ext. 165; Direct (323) 717-4072", "email": "Rossanab@uspolymersinc.com", "owner_management": "", "resource": "Phone/email"},
         {"vendor": "Bridge Shutter & More", "turnaround": "3 Weeks", "primary_contact": "", "phone": "909-616-9986", "email": "bridgeshutterandmore@gmail.com", "owner_management": "", "resource": "Phone/email; office hours M-F 8:00am-4:30pm"},
@@ -538,7 +538,7 @@ ETA_REFERENCE = {
         {"vendor": "Kristine", "turnaround": "Shutters: 6-10 Weeks; Rush shutters: 3-4 Weeks", "primary_contact": "Maria Aburto", "phone": "786-661-2340 ext. 308", "email": "maria@kristinewindowtreatments.com", "owner_management": "Howard Rothman, Owner", "resource": "Phone/email"},
     ],
     "Roman Shades": [
-        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "normanbridgeshutter@gmail.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
+        {"vendor": "Norman / Bridge Shutter", "turnaround": "3-4 Weeks", "primary_contact": "Norman Wong, Sales Manager", "phone": "Cell 714-488-8533; Office 909-616-9986; Fax 909-635-6468", "email": "norman.shutter@afdfloor.com", "owner_management": "Norman Wong", "resource": "Phone/email"},
         {"vendor": "Richard Williams Drapery", "turnaround": "N/A", "primary_contact": "Katty McQueen", "phone": "805-258-6005", "email": "katty@lacustomblinds.com", "owner_management": "N/A", "resource": "Reach Cristina C; RingCentral Roman Shades & Draperies Chat"},
         {"vendor": "Drapemax", "turnaround": "4 Weeks", "primary_contact": "", "phone": "", "email": "", "owner_management": "", "resource": "Reach Cristina C; RingCentral Roman Shades & Draperies Chat"},
     ],
