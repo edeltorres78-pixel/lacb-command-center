@@ -1595,6 +1595,39 @@ def group_installers_by_priority(installers: list[dict]) -> dict[str, list[dict]
     return grouped
 
 
+SCHEDULING_INSTALLER_CONTACTS = [
+    {"Installer": "Juan Carlos (JC)", "Phone Number": "310-995-1697"},
+    {"Installer": "David", "Phone Number": "310-904-4962"},
+    {"Installer": "Jose", "Phone Number": "323-695-9236"},
+    {"Installer": "Martin", "Phone Number": "323-270-7912"},
+    {"Installer": "Ricardo", "Phone Number": "323-270-9856"},
+    {"Installer": "Oscar", "Phone Number": "310-633-1294"},
+    {"Installer": "Ruben", "Phone Number": "424-240-2803"},
+    {"Installer": "Ismael", "Phone Number": "626-926-7543"},
+    {"Installer": "German", "Phone Number": "714-209-5564"},
+    {"Installer": "Eddie", "Phone Number": "951-396-0215"},
+    {"Installer": "Alan", "Phone Number": "760-215-4544"},
+    {"Installer": "Daniel", "Phone Number": "951-396-0215"},
+    {"Installer": "Eric (San Diego)", "Phone Number": "619-645-4332"},
+]
+
+
+def get_installer_contact_phone(installer_name: str) -> str:
+    normalized_installer = _norm_col_name(installer_name)
+    if not normalized_installer:
+        return ""
+    for row in SCHEDULING_INSTALLER_CONTACTS:
+        contact_name = clean_text(row.get("Installer", ""))
+        normalized_contact = _norm_col_name(contact_name)
+        if not normalized_contact:
+            continue
+        contact_tokens = [token for token in re.split(r"\s+", re.sub(r"[^A-Za-z0-9]+", " ", contact_name)) if token]
+        token_match = any(_norm_col_name(token) and _norm_col_name(token) in normalized_installer for token in contact_tokens)
+        if normalized_contact in normalized_installer or normalized_installer in normalized_contact or token_match:
+            return clean_text(row.get("Phone Number", ""))
+    return ""
+
+
 SCHEDULING_INSTALLER_EXCEPTIONS = [
     ("Ruben Cortes", "Works M-F unless there is a block for him if he needs the day."),
     ("German Ruiz", "Works only 3 days during the week. Off Monday and Wednesday."),
@@ -1636,7 +1669,11 @@ def build_scheduling_priority_copy_block(
     ]
     for priority in ["P1", "P2", "P3"]:
         names = [
-            clean_text(item.get("installer", ""))
+            (
+                f"{clean_text(item.get('installer', ''))} ({get_installer_contact_phone(item.get('installer', ''))})"
+                if get_installer_contact_phone(item.get("installer", ""))
+                else clean_text(item.get("installer", ""))
+            )
             for item in grouped[priority]
             if clean_text(item.get("installer", ""))
         ]
@@ -5037,6 +5074,9 @@ def scheduling_assistant_page():
         for installer_name, note in SCHEDULING_INSTALLER_EXCEPTIONS:
             st.markdown(f"- **{installer_name}:** {note}")
 
+    with st.expander("Installer Contact Directory"):
+        st.dataframe(pd.DataFrame(SCHEDULING_INSTALLER_CONTACTS), use_container_width=True, hide_index=True)
+
     tab1, tab2 = st.tabs(["Scheduling Request Generator", "ZIP -> Installer Priority"])
 
     with tab1:
@@ -5137,6 +5177,7 @@ def scheduling_assistant_page():
                             {
                                 "Priority Order": i + 1,
                                 "Installer": item["installer"],
+                                "Phone Number": get_installer_contact_phone(item["installer"]),
                             }
                             for i, item in enumerate(items)
                         ]
