@@ -1608,6 +1608,7 @@ SCHEDULING_INSTALLER_CONTACTS = [
     {"Installer": "Eddie", "Phone Number": "951-396-0215"},
     {"Installer": "Alan", "Phone Number": "760-215-4544"},
     {"Installer": "Daniel", "Phone Number": "951-396-0215"},
+    {"Installer": "Christian Garcia", "Phone Number": "(661) 486-9446"},
     {"Installer": "Eric (San Diego)", "Phone Number": "619-645-4332"},
 ]
 
