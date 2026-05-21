@@ -4180,6 +4180,10 @@ def _kpi_token_count(df: pd.DataFrame, column: str, token: str) -> int:
     )
 
 
+def _kpi_total_token_count(df: pd.DataFrame, column: str, tokens: list[str]) -> int:
+    return sum(_kpi_token_count(df, column, token) for token in tokens)
+
+
 def _kpi_load_data(owner_filter: str, start_date: date, end_date: date):
     start_iso = start_date.isoformat()
     end_iso = end_date.isoformat()
@@ -4223,11 +4227,7 @@ def kpi_dashboard_page():
     df_tickets, df_activities = _kpi_load_data(owner_filter, start_date, end_date)
 
     total_activities = len(df_activities) if not df_activities.empty else 0
-    total_ticket_actions = (
-        _kpi_token_count(df_activities, "action_type", "new ticket")
-        + _kpi_token_count(df_activities, "action_type", "ticket updated")
-        + _kpi_token_count(df_activities, "action_type", "ticket closed")
-    )
+    total_ticket_actions = _kpi_total_token_count(df_activities, "action_type", IO_TASK_ACTIONS)
 
     ref_cols = st.columns([1.4, 1, 1, 1])
     ref_cols[0].markdown(
