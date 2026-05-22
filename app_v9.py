@@ -4264,7 +4264,7 @@ def kpi_dashboard_page():
     df_tickets, df_activities = _kpi_load_data(owner_filter, start_date, end_date)
 
     total_activities = len(df_activities) if not df_activities.empty else 0
-    total_ticket_actions = _kpi_total_token_count(df_activities, "action_type", KPI_TICKET_WORKFLOW_ACTIONS)
+    total_ticket_actions = _kpi_rows_with_any_token(df_activities, "action_type", KPI_TICKET_WORKFLOW_ACTIONS)
 
     ref_cols = st.columns([1.4, 1, 1, 1])
     ref_cols[0].markdown(
