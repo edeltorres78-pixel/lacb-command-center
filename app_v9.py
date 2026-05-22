@@ -4184,6 +4184,26 @@ def _kpi_total_token_count(df: pd.DataFrame, column: str, tokens: list[str]) -> 
     return sum(_kpi_token_count(df, column, token) for token in tokens)
 
 
+def _kpi_rows_with_any_token(df: pd.DataFrame, column: str, tokens: list[str]) -> int:
+    if df.empty or column not in df.columns:
+        return 0
+    allowed = {clean_text(token).lower() for token in tokens if clean_text(token)}
+    if not allowed:
+        return 0
+    return int(
+        df[column]
+        .fillna("")
+        .astype(str)
+        .apply(
+            lambda value: any(
+                clean_text(part).lower() in allowed
+                for part in _split_multi_value(value)
+            )
+        )
+        .sum()
+    )
+
+
 def _kpi_load_data(owner_filter: str, start_date: date, end_date: date):
     start_iso = start_date.isoformat()
     end_iso = end_date.isoformat()
@@ -4227,7 +4247,7 @@ def kpi_dashboard_page():
     df_tickets, df_activities = _kpi_load_data(owner_filter, start_date, end_date)
 
     total_activities = len(df_activities) if not df_activities.empty else 0
-    total_ticket_actions = _kpi_total_token_count(df_activities, "action_type", IO_TASK_ACTIONS)
+    total_ticket_actions = _kpi_rows_with_any_token(df_activities, "action_type", IO_TASK_ACTIONS)
 
     ref_cols = st.columns([1.4, 1, 1, 1])
     ref_cols[0].markdown(
